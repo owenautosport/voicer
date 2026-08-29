@@ -12,3 +12,4 @@ native/voicerkit/*.xcodeproj
 .voicer/
 *.jpg
 *.mp3
+native/voicerkit/.build/
