@@ -1,0 +1,14 @@
+node_modules/
+dist/
+out/
+.DS_Store
+*.log
+
+# Swift / SwiftPM
+native/voicerkit/.build/
+native/voicerkit/*.xcodeproj
+
+# never commit local config or captures
+.voicer/
+*.jpg
+*.mp3
