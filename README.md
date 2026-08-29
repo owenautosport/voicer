@@ -59,14 +59,20 @@ listen to rather than silently breaking, and adding a third backend is one file.
 
 ### Computer control
 
-Voicer drives your Mac through two MCP servers, and the agent chooses between them:
+Voicer implements its own control, rather than borrowing Claude Code's. The sidecar posts
+`CGEvent`s for click, type, key and scroll, and Voicer exposes those to the agent as an in-process
+MCP server called `voicer-control`, alongside the screenshot it already takes.
 
-- **`computer-use`** — screenshots, clicks, typing and scrolling in native applications.
-- **`claude-in-chrome`** — real control of Chrome pages.
+This was forced rather than chosen. Claude Code ships a `computer-use` MCP server, and the `claude`
+binary will even run it standalone — but every call from a headless session comes back with *"This
+computer-use server instance is not wired to a session"*, because the implementation lives in an
+interactive session's state. (A second trap on the way: the MCP server *name* `computer-use` is
+reserved. Register a server under it and the CLI substitutes its own built-in, which then vanishes
+from the session with no error at all.)
 
-Both are needed. The `computer-use` server deliberately tiers browsers down to read-only and
-terminals to click-only, so it can *see* Chrome but not type into it; anything on the web has to
-route through the Chrome extension instead.
+Owning the executor turns out to be the better end state anyway. Claude Code's server caps browsers
+at read-only and terminals at click-only, so it can *see* Chrome but not type into it. Voicer's has
+no such tier — Chrome and Terminal are controllable like anything else.
 
 Voicer runs the agent with permissions bypassed — it acts rather than asking first. The rails
 against that are visibility and reversibility, not confirmation prompts:
@@ -81,6 +87,7 @@ against that are visibility and reversibility, not confirmation prompts:
 - [Claude Code](https://claude.com/claude-code) installed and signed in
 - Node 20+
 - Swift toolchain (ships with the Xcode Command Line Tools — full Xcode is not required)
+- Accessibility permission, granted once on first use, so Voicer can move the mouse and keyboard
 
 Voicer is built and tested on an Intel Mac. It does no local model inference, which is
 deliberate: the smallest usable neural voice models still run slower than real time on an Intel

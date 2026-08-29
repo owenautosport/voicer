@@ -38,9 +38,14 @@ the question. Voicer is already in front of the work and can already see it.
   hard dependency.
 - **No Xcode.app is installed**, only the command-line toolchain. The Swift component must build
   under SwiftPM and must be a plain binary, not an app target.
-- **The agent's tool providers have policy tiers.** The `computer-use` MCP server grants full
-  control of native applications but restricts browsers to read-only and terminals to click-only.
-  Browser automation must route through `claude-in-chrome` instead.
+- **Claude Code's computer control cannot be borrowed.** Established by spike on 2026-08-30.
+  `claude --computer-use-mcp` runs and exposes its tool list, but every call fails with "This
+  computer-use server instance is not wired to a session" — the implementation lives in an
+  interactive session's app state, which a headless SDK session does not have. Separately, the
+  server *name* `computer-use` is reserved: registering under it makes the CLI substitute its
+  built-in, and the server then vanishes from the session with no error. **Voicer therefore
+  provides its own control tools**, via `CGEvent`, as its own MCP server. This needs a one-off
+  Accessibility grant, and it means Voicer owns the safety story outright.
 
 ## Architecture
 
@@ -91,13 +96,19 @@ Protocol is newline-delimited JSON, one object per line, requests on stdin and e
 | `{"cmd":"capture","id":N}` | `{"id":N,"event":"captured","path":"/tmp/voicer-…​.jpg","w":…,"h":…}` |
 | `{"cmd":"speak","id":N,"text":"…"}` | `{"id":N,"event":"speech_done"}` |
 | `{"cmd":"cancel","id":N}` | `{"id":N,"event":"cancelled"}` |
+| `{"cmd":"click","id":N,"x":X,"y":Y,"button":"left"}` | `{"id":N,"event":"acted"}` |
+| `{"cmd":"type","id":N,"text":"…"}` | `{"id":N,"event":"acted"}` |
+| `{"cmd":"key","id":N,"combo":"cmd+s"}` | `{"id":N,"event":"acted"}` |
+| `{"cmd":"scroll","id":N,"x":X,"y":Y,"dy":D}` | `{"id":N,"event":"acted"}` |
 | any | `{"id":N,"event":"error","code":"…","message":"…"}` |
 
 Recognition uses `SFSpeechRecognizer` with `requiresOnDeviceRecognition = true`, which is
 supported on Intel Macs for `en-GB`. Audio is captured with `AVAudioEngine`; RMS level is emitted
 alongside partials so the pill can animate. Capture uses `ScreenCaptureKit` for the main display,
 downscaled so the longest edge is at most 1280 px and written as JPEG at quality 70 — enough for
-the model to read UI text, small enough to keep the turn quick.
+the model to read UI text, small enough to keep the turn quick. The scale factor is retained: the
+agent clicks in the coordinate space of the image it was shown, and the sidecar converts back to
+physical pixels before posting an event.
 
 The `id` field correlates every response with its request; the sidecar handles one recognition
 session at a time and rejects a second `listen_start` with an `error`.
@@ -129,8 +140,8 @@ chooses, and the machine tracks both. Any `abort` transitions to `idle` from any
 
 - `permissionMode: 'bypassPermissions'` — this is the setting that delivers full autonomy; without
   it the SDK stops and asks, which cannot be answered from a voice widget.
-- `mcpServers` — `computer-use` and `claude-in-chrome`, read from the user's existing Claude Code
-  configuration so Voicer does not maintain a second copy.
+- `mcpServers` — a single server, `voicer-control`, which Voicer runs itself (see *Control tools*
+  below). It must **not** be named `computer-use`; that name is reserved and silently swallowed.
 - `resume: sessionId` — the previous turn's session id, which is what makes "no, the other one"
   resolve correctly. Stored in memory; cleared when the app quits.
 - `abortController` — held by the STOP button and the kill hotkey.
@@ -155,6 +166,16 @@ interface TtsBackend {
 - `FishBackend` — `POST https://api.fish.audio/v1/tts`, bearer token, model `s2.1-pro-free`,
   MP3 out, handed to the renderer to play. Ten-second timeout.
 - `AppleBackend` — a `speak` command to the sidecar.
+
+**Control tools (`voicer-control`)** — an in-process MCP server, defined with the Agent SDK's
+`createSdkMcpServer`, that hands the agent five tools: `screenshot`, `click`, `type`, `key` and
+`scroll`. Each delegates to the sidecar, which posts `CGEvent`s. Screenshot reuses the existing
+`capture` command, so the coordinate space the agent clicks in is the same downscaled image it was
+shown; the sidecar scales coordinates back up to physical pixels before posting.
+
+Unlike Claude Code's server there is no per-application allowlist and no browser or terminal tier,
+so Chrome and Terminal are controllable. That is the point, and it is also the risk: the rails are
+the red state, the kill hotkey and the action log, and nothing else.
 
 **`ActionLog`** — appends one JSON object per line to `~/.voicer/actions.jsonl` for every tool
 call the agent makes: timestamp, turn id, tool name, arguments, result summary. Append-only,
@@ -221,10 +242,11 @@ Linux; any local model inference.
 
 1. **Fish Audio's free window may close at any time.** Mitigated by the backend interface and the
    Apple fallback; the failure mode is a less pleasant voice, not an outage.
-2. **`bypassPermissions` is genuinely dangerous.** An agent with the mouse and keyboard on a
-   logged-in machine can do irreversible things. This was an explicit choice; the mitigations are
-   visibility (red state), interruption (STOP, kill hotkey) and forensics (action log), not
-   prevention.
+2. **`bypassPermissions` plus Voicer's own control tools is genuinely dangerous.** An agent with
+   the mouse and keyboard on a logged-in machine can do irreversible things, and because Voicer
+   implements control itself there is no per-app allowlist and no browser or terminal tier to fall
+   back on. This was an explicit choice; the mitigations are visibility (red state), interruption
+   (STOP, kill hotkey) and forensics (action log), not prevention.
 3. **Turn latency on Intel hardware is unmeasured.** Recognition, capture, agent round trip and
    the first audio byte all add up, and the agent round trip dominates. If the total proves too
    slow to feel conversational, the first lever is to stop sending a screenshot on turns that do
