@@ -2,13 +2,16 @@
   "name": "voicer",
   "version": "0.1.0",
   "description": "A pinned-to-front macOS mic widget",
-  "main": "index.js",
+  "main": "out/main/index.js",
   "directories": {
     "doc": "docs"
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "sidecar": "./scripts/build-sidecar.sh",
+    "dev": "npm run sidecar && electron-vite dev",
+    "build": "npm run sidecar -- -c release && electron-vite build && electron-builder"
   },
   "repository": {
     "type": "git",
@@ -34,5 +37,30 @@
     "typescript": "^5.9.3",
     "vite": "^7.3.6",
     "vitest": "^4.1.11"
+  },
+  "build": {
+    "appId": "uk.co.owenprice.voicer",
+    "productName": "Voicer",
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dir"
+      ],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Voicer listens when you press its microphone button.",
+        "NSSpeechRecognitionUsageDescription": "Voicer transcribes your speech on this Mac, without sending audio anywhere.",
+        "LSUIElement": true
+      }
+    },
+    "extraResources": [
+      {
+        "from": "native/voicerkit/.build/release/voicerkit",
+        "to": "voicerkit"
+      }
+    ]
   }
 }

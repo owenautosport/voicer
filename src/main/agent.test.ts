@@ -31,8 +31,10 @@ const make = (query: unknown, extra: Record<string, unknown> = {}) =>
 
 const callbacks = () => ({ onText: vi.fn(), onTool: vi.fn(), onDone: vi.fn(), onError: vi.fn() })
 
-const optionsOf = (query: ReturnType<typeof stream>, call = 0) =>
-  (query.mock.calls[call]![0] as any).options
+const argOf = (query: { mock: { calls: unknown[][] } }, call = 0) =>
+  query.mock.calls[call]![0] as any
+
+const optionsOf = (query: { mock: { calls: unknown[][] } }, call = 0) => argOf(query, call).options
 
 describe('AgentClient', () => {
   it('passes bypassPermissions together with the required danger flag', async () => {
@@ -89,7 +91,7 @@ describe('AgentClient', () => {
     const query = stream([result()])
     const c = make(query, { readImage: () => Buffer.from('jpegbytes') })
     await c.run('what is this', '/tmp/a.jpg', callbacks())
-    const prompt = (query.mock.calls[0]![0] as any).prompt
+    const prompt = argOf(query).prompt
     let blocks: any[] = []
     for await (const msg of prompt) { blocks = msg.message.content; break }
     expect(blocks.some((b) => b.type === 'image')).toBe(true)
@@ -99,7 +101,7 @@ describe('AgentClient', () => {
   it('sends a plain string prompt when there is no screenshot', async () => {
     const query = stream([result()])
     await make(query).run('just talking', undefined, callbacks())
-    expect((query.mock.calls[0]![0] as any).prompt).toBe('just talking')
+    expect(argOf(query).prompt).toBe('just talking')
   })
 
   it('reports an error rather than throwing when the stream fails', async () => {

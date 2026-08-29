@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <title>Voicer</title>
+  <link rel="stylesheet" href="./pill.css" />
+</head>
+<body>
+  <div id="app" data-state="idle">
+    <div id="card" hidden><p id="answer"></p></div>
+    <div id="status"></div>
+    <div id="controls">
+      <button id="stop" hidden>STOP</button>
+      <button id="mic" aria-label="Talk to Voicer"><span id="ring"></span></button>
+    </div>
+  </div>
+  <script type="module" src="./pill.ts"></script>
+</body>
+</html>

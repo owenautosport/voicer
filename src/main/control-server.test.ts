@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, type Mock } from 'vitest'
 import { buildControlTools, type ControlDeps } from './control-server'
 
 const deps = (over: Partial<ControlDeps> = {}) => {
@@ -12,7 +12,11 @@ const deps = (over: Partial<ControlDeps> = {}) => {
     readImage: () => Buffer.from('jpegbytes'),
     ...over,
   }
-  return d as unknown as ControlDeps & typeof d
+  return d as unknown as ControlDeps & {
+    sidecar: { capture: Mock; act: Mock }
+    log: { append: Mock }
+    onAction: Mock
+  }
 }
 
 const toolNamed = (d: ControlDeps, name: string) =>
