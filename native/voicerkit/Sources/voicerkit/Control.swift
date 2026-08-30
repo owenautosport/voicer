@@ -60,6 +60,15 @@ enum Control {
         guard AXIsProcessTrustedWithOptions(options) else { throw ControlError.notTrusted }
     }
 
+    /// Ask at launch rather than mid-click. Two reasons: a permission dialog
+    /// appearing while the agent is already moving the mouse is alarming, and
+    /// until something asks, macOS does not list the app in System Settings at
+    /// all — so there is no row for the user to tick ahead of time.
+    static func promptIfUntrusted() {
+        guard !AXIsProcessTrusted() else { return }
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    }
+
     static func click(at point: CGPoint, button: String) throws {
         try ensureTrusted()
         let (down, up, mouseButton): (CGEventType, CGEventType, CGMouseButton) =

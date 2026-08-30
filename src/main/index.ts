@@ -54,7 +54,9 @@ app.whenReady().then(() => {
     ? join(process.resourcesPath, 'voicerkit')
     : join(app.getAppPath(), 'native/voicerkit/.build/debug/voicerkit')
 
+  console.log('[voicer] sidecar:', sidecarPath, 'packaged:', app.isPackaged)
   const sidecar = new SidecarClient(sidecarPath)
+  sidecar.onError((err) => console.error('[voicer] sidecar failure:', err.message))
   sidecar.start()
 
   /** Audio playback lives in the renderer; the main process has no output device. */

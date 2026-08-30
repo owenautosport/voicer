@@ -3,9 +3,6 @@
   "version": "0.1.0",
   "description": "A pinned-to-front macOS mic widget",
   "main": "out/main/index.js",
-  "directories": {
-    "doc": "docs"
-  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

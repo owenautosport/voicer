@@ -92,3 +92,25 @@ describe('SidecarClient', () => {
     expect(results).toHaveLength(3)
   })
 })
+
+describe('SidecarClient failure reporting', () => {
+  it('reports a spawn failure instead of swallowing it', async () => {
+    const c = new SidecarClient('/definitely/not/a/binary')
+    const err = await new Promise<Error>((resolve) => {
+      c.onError(resolve)
+      c.start()
+    })
+    expect(err.message).toMatch(/ENOENT|spawn/i)
+  })
+
+  it('includes the exit code in the error when the sidecar dies', async () => {
+    const c = new SidecarClient(process.execPath, [FAKE])
+    const err = await new Promise<Error>((resolve) => {
+      c.onError(resolve)
+      c.start()
+      c.sendRaw({ cmd: 'crash', id: 1 })
+    })
+    expect(err.message).toMatch(/code 1/)
+    c.stop()
+  })
+})

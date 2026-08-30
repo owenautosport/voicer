@@ -4,9 +4,11 @@ A small microphone button that floats above everything on your Mac. Click it, ta
 it again. Voicer sees what is on your screen, answers out loud, and — when you ask it to —
 takes over the mouse and keyboard and does the thing for you.
 
-> **Status: design complete, implementation not started.** Nothing in this repo runs yet.
-> The design is written up in
-> [`docs/superpowers/specs/2026-08-30-voicer-design.md`](docs/superpowers/specs/2026-08-30-voicer-design.md).
+> **Status: built, not yet verified end to end.** The app builds, launches, and runs its
+> sidecar; 92 unit tests and a 21-check sidecar self-test pass. What has *not* been confirmed
+> is a full spoken turn on real hardware — that needs the macOS permissions below granted
+> first. See [the design](docs/superpowers/specs/2026-08-30-voicer-design.md) and
+> [the plan](docs/superpowers/plans/2026-08-30-voicer-v1.md).
 
 ## Why
 
@@ -80,6 +82,29 @@ against that are visibility and reversibility, not confirmation prompts:
 - a global kill hotkey (<kbd>⌥</kbd><kbd>⌘</kbd><kbd>.</kbd>) that aborts mid-action,
 - an unmissable red pulsing state whenever it has the controls,
 - an append-only log at `~/.voicer/actions.jsonl` recording everything it did.
+
+## Permissions
+
+macOS gates everything Voicer does. Two grants are manual:
+
+| Pane | Manual? | Without it |
+| --- | --- | --- |
+| **Accessibility** | **Yes** | No clicking, typing or scrolling — no computer control at all |
+| **Screen Recording** | **Yes** | Voicer cannot see your screen |
+| Microphone | Prompted | No listening |
+| Speech Recognition | Prompted | No transcription |
+
+Grant these to the **app bundle**, never to `voicerkit`. The sidecar is a child process, so macOS
+attributes its requests to the parent and `voicerkit` never appears in the list.
+
+An app only appears in System Settings once it has *asked*, so Voicer requests Accessibility at
+launch rather than mid-click — both to put the row there before you need it, and because a
+permission dialog appearing while the agent is already moving your mouse is alarming.
+
+**Running from source is different.** The parent bundle is then the generic `Electron.app`, which
+carries none of Voicer's usage strings, and macOS *kills* the sidecar the moment it touches the
+speech recogniser. Development that involves the microphone needs the packaged app: `npm run build`,
+then run `dist/mac/Voicer.app`.
 
 ## Requirements
 

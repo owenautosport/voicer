@@ -22,6 +22,7 @@ export class SidecarClient {
   #pending = new Map<number, Pending>()
   #onPartial = new Map<number, (text: string, level: number) => void>()
   #crashHandlers: (() => void)[] = []
+  #errorHandlers: ((err: Error) => void)[] = []
   #listenId?: number
 
   constructor(
@@ -33,21 +34,46 @@ export class SidecarClient {
     const proc = spawn(this.binary, this.args, { stdio: ['pipe', 'pipe', 'pipe'] })
     proc.stdout.setEncoding('utf8')
     proc.stdout.on('data', (chunk: string) => this.#ingest(chunk))
-    proc.on('exit', () => {
-      const err = new Error('sidecar exited')
+
+    // The sidecar's own diagnostics. Swallowing these once cost an hour of
+    // "it just isn't running" with nothing to go on.
+    proc.stderr.setEncoding('utf8')
+    proc.stderr.on('data', (chunk: string) => {
+      const line = chunk.trim()
+      if (line) console.warn('[voicerkit]', line)
+    })
+
+    proc.on('exit', (code, signal) => {
+      const err = new Error(`sidecar exited (code ${code}, signal ${signal})`)
       for (const p of this.#pending.values()) p.reject(err)
       this.#pending.clear()
       this.#proc = undefined
+      this.#report(err)
       for (const fn of this.#crashHandlers) fn()
     })
-    // A dead pipe must not take the whole app down with it.
-    proc.on('error', () => {})
-    proc.stdin.on('error', () => {})
+
+    // A failed spawn — a missing or unexecutable binary — is reported, never
+    // swallowed. A dead pipe must still not take the whole app down.
+    proc.on('error', (err) => {
+      console.error(`[voicerkit] could not spawn ${this.binary}:`, err)
+      this.#report(err)
+    })
+    proc.stdin.on('error', (err) => console.warn('[voicerkit] stdin:', err.message))
+
     this.#proc = proc
   }
 
   onCrash(fn: () => void): void {
     this.#crashHandlers.push(fn)
+  }
+
+  /** Fatal sidecar problems, with the reason attached. */
+  onError(fn: (err: Error) => void): void {
+    this.#errorHandlers.push(fn)
+  }
+
+  #report(err: Error): void {
+    for (const fn of this.#errorHandlers) fn(err)
   }
 
   /** Exposed for tests that need to poke the protocol directly. */

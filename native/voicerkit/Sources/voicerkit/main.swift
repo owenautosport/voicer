@@ -18,6 +18,10 @@ func emit(_ event: Event) {
 let listener = Listener()
 let speaker = Speaker()
 
+// Puts Voicer in the Accessibility list so the user can grant it before the
+// agent ever needs to click anything.
+Control.promptIfUntrusted()
+
 /// Speech synthesis and the audio engine both need a live run loop. Reading
 /// stdin happens on a background thread so the main thread can pump it.
 let reader = Thread {
