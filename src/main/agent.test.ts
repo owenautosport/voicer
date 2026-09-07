@@ -195,3 +195,60 @@ describe('AgentClient', () => {
     expect(optionsOf(query).cwd).toBe('/Users/someone')
   })
 })
+
+describe('AgentClient model selection', () => {
+  it('passes the configured model to the session', async () => {
+    const query = stream([result()])
+    await make(query, { model: 'sonnet' }).run('hello', undefined, callbacks())
+    expect(optionsOf(query).model).toBe('sonnet')
+  })
+
+  // Omitted rather than guessed: with no model key the CLI uses whatever the
+  // user already chose in Claude Code, which is the right default for "Default".
+  it('omits the model entirely when none is configured', async () => {
+    const query = stream([result()])
+    await make(query).run('hello', undefined, callbacks())
+    expect('model' in optionsOf(query)).toBe(false)
+  })
+
+  it('takes a new model on the next turn without a restart', async () => {
+    const query = stream([result(), result()])
+    const agent = make(query)
+    await agent.run('one', undefined, callbacks())
+    agent.model = 'haiku'
+    await agent.run('two', undefined, callbacks())
+    expect('model' in optionsOf(query, 0)).toBe(false)
+    expect(optionsOf(query, 1).model).toBe('haiku')
+  })
+
+  it('clears back to the CLI default when the model is unset again', async () => {
+    const query = stream([result(), result()])
+    const agent = make(query, { model: 'haiku' })
+    await agent.run('one', undefined, callbacks())
+    agent.model = undefined
+    await agent.run('two', undefined, callbacks())
+    expect(optionsOf(query, 0).model).toBe('haiku')
+    expect('model' in optionsOf(query, 1)).toBe(false)
+  })
+})
+
+describe('AgentClient environment', () => {
+  // The SDK marks its child with CLAUDE_CODE_CHILD_SESSION=1, and `open -a`
+  // hands that whole environment to any app the agent launches — so a terminal
+  // Voicer opens inherits the marker and silently saves no transcript. Forcing
+  // persistence alongside it means the apps Voicer opens still record theirs.
+  it('forces session persistence so apps it launches keep their transcripts', async () => {
+    const query = stream([result()])
+    await make(query).run('hello', undefined, callbacks())
+    expect(optionsOf(query).env.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE).toBe('1')
+  })
+
+  it('keeps the rest of the environment it was given', async () => {
+    const query = stream([result()])
+    await make(query, { env: { PATH: '/usr/bin', HOME: '/Users/nobody' } })
+      .run('hello', undefined, callbacks())
+    expect(optionsOf(query).env.PATH).toBe('/usr/bin')
+    expect(optionsOf(query).env.HOME).toBe('/Users/nobody')
+    expect(optionsOf(query).env.CLAUDE_CODE_FORCE_SESSION_PERSISTENCE).toBe('1')
+  })
+})

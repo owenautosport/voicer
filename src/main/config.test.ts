@@ -36,6 +36,18 @@ describe('loadConfig', () => {
     a.capture.maxEdgePx = 99
     expect(loadConfig(dir()).capture.maxEdgePx).toBe(1280)
   })
+
+  it('carries a configured model through', () => {
+    const d = dir()
+    writeFileSync(join(d, 'config.json'), JSON.stringify({ model: 'sonnet' }))
+    expect(loadConfig(d).model).toBe('sonnet')
+  })
+
+  // Absent rather than a hardcoded id, so Voicer follows whatever Claude Code
+  // is set to until the user actually picks something.
+  it('leaves the model unset when the file does not name one', () => {
+    expect(loadConfig(dir()).model).toBeUndefined()
+  })
 })
 
 describe('resolveClaudePath', () => {
@@ -95,6 +107,21 @@ describe('saveConfig', () => {
     const c = loadConfig(d)
     expect(c.tts.fishApiKey).toBe('k')
     expect(c.listen.silenceMs).toBe(3000)
+  })
+
+  it('round-trips a model choice', () => {
+    const d = dir()
+    expect(saveConfig({ model: 'haiku' }, d).model).toBe('haiku')
+    expect(loadConfig(d).model).toBe('haiku')
+  })
+
+  // Picking "Default" in the panel sends undefined, which must clear the key
+  // rather than pin the model to whatever was chosen before.
+  it('clears the model when saved as undefined', () => {
+    const d = dir()
+    saveConfig({ model: 'haiku' }, d)
+    saveConfig({ model: undefined }, d)
+    expect(loadConfig(d).model).toBeUndefined()
   })
 
   it('refuses an alignment it does not recognise rather than losing the window', () => {

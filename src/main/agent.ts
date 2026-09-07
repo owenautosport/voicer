@@ -47,8 +47,28 @@ export type AgentOptions = {
   claudePath?: string
   /** Where the session runs; see resolveAgentCwd. */
   cwd?: string
+  /** Model alias or id; unset follows Claude Code's own default. */
+  model?: string
+  /** Base environment for the session. Defaults to Voicer's own. */
+  env?: Record<string, string | undefined>
   query?: QueryFn
   readImage?: (path: string) => Buffer
+}
+
+/**
+ * The environment the agent session runs in.
+ *
+ * The SDK marks the CLI it spawns with `CLAUDE_CODE_CHILD_SESSION=1`, and that
+ * marker turns transcript saving off. It would be harmless if it stopped there
+ * — but `open -a` hands the caller's whole environment to the app it launches,
+ * so every app the agent opens inherits the marker, and any Claude Code started
+ * inside one silently keeps no transcript. Forcing persistence alongside it
+ * means what Voicer opens still records its own history.
+ */
+export function agentEnv(
+  base: Record<string, string | undefined> = process.env,
+): Record<string, string | undefined> {
+  return { ...base, CLAUDE_CODE_FORCE_SESSION_PERSISTENCE: '1' }
 }
 
 /**
@@ -62,7 +82,15 @@ export class AgentClient {
   #controller?: AbortController
   #usage: UsageTotals = noUsage()
 
-  constructor(private readonly opts: AgentOptions) {}
+  /**
+   * Read on each turn rather than captured at construction, so changing the
+   * model in Settings takes effect on the next thing you say.
+   */
+  model?: string
+
+  constructor(private readonly opts: AgentOptions) {
+    this.model = opts.model
+  }
 
   get sessionId(): string | undefined {
     return this.#sessionId
@@ -127,6 +155,9 @@ export class AgentClient {
           pathToClaudeCodeExecutable: this.opts.claudePath,
           ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
           ...(this.#sessionId ? { resume: this.#sessionId } : {}),
+          // Absent, not null: the CLI's own default model must win.
+          ...(this.model ? { model: this.model } : {}),
+          env: agentEnv(this.opts.env),
           systemPrompt: { type: 'preset', preset: 'claude_code', append: SPOKEN_STYLE },
           // Named `voicer-control`: `computer-use` is reserved by the CLI, which
           // substitutes its own built-in and then drops the server from the
