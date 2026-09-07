@@ -15,6 +15,11 @@ func bestEnglishVoice() -> AVSpeechSynthesisVoice? {
 final class Speaker: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
     private let synth = AVSpeechSynthesizer()
     private var pending: [ObjectIdentifier: (Int, (Event) -> Void)] = [:]
+    /// `pending` is written from the stdin reader thread and read from the main
+    /// queue by the delegate. Unsynchronised, an entry can be lost — and a lost
+    /// entry means `speech_done` is never emitted, the turn never finishes
+    /// speaking, and the microphone button goes dead for the rest of the run.
+    private let lock = NSLock()
 
     override init() {
         super.init()
@@ -29,11 +34,21 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable 
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = bestEnglishVoice()
         utterance.rate = 0.52
+        lock.lock()
         pending[ObjectIdentifier(utterance)] = (id, emit)
-        synth.speak(utterance)
+        lock.unlock()
+
+        // AVSpeechSynthesizer is a main-thread API and delivers its delegate
+        // callbacks on the main queue. Speaking from the reader thread can mean
+        // they never arrive.
+        DispatchQueue.main.async { [weak self] in self?.synth.speak(utterance) }
     }
 
-    func stop() { synth.stopSpeaking(at: .immediate) }
+    func stop() {
+        DispatchQueue.main.async { [weak self] in
+            self?.synth.stopSpeaking(at: .immediate)
+        }
+    }
 
     func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         finish(utterance)
@@ -44,7 +59,10 @@ final class Speaker: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable 
     }
 
     private func finish(_ utterance: AVSpeechUtterance) {
-        guard let (id, emit) = pending.removeValue(forKey: ObjectIdentifier(utterance)) else { return }
+        lock.lock()
+        let entry = pending.removeValue(forKey: ObjectIdentifier(utterance))
+        lock.unlock()
+        guard let (id, emit) = entry else { return }
         emit(.speechDone(id: id))
     }
 }

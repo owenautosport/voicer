@@ -24,6 +24,9 @@ export type OrchestratorDeps = {
   }
 }
 
+/** States in which a turn is under way and the user is only watching. */
+const WORKING = new Set<TurnState>(['capturing', 'thinking', 'speaking', 'acting'])
+
 /** Strip the MCP prefix so "mcp__voicer-control__click" reads as "click". */
 const friendlyTool = (tool: string): string => tool.split('__').pop() ?? tool
 
@@ -38,11 +41,12 @@ export class Orchestrator {
   #partialHandlers: ((t: string, l: number) => void)[] = []
   #answerHandlers: ((t: string) => void)[] = []
   #statusHandlers: ((t: string) => void)[] = []
+  #failHandlers: ((message: string) => void)[] = []
   #answer = ''
 
   constructor(private readonly deps: OrchestratorDeps) {
     this.#machine.onChange((s) => this.#stateHandlers.forEach((fn) => fn(s)))
-    this.deps.sidecar.onCrash(() => this.#machine.send({ type: 'FAIL', message: 'sidecar crashed' }))
+    this.deps.sidecar.onCrash(() => this.#fail('the sidecar stopped running'))
   }
 
   get state(): TurnState {
@@ -53,22 +57,60 @@ export class Orchestrator {
   onPartial(fn: (t: string, l: number) => void) { this.#partialHandlers.push(fn) }
   onAnswer(fn: (t: string) => void) { this.#answerHandlers.push(fn) }
   onStatus(fn: (t: string) => void) { this.#statusHandlers.push(fn) }
+  onFail(fn: (message: string) => void) { this.#failHandlers.push(fn) }
 
   #status(text: string) { this.#statusHandlers.forEach((fn) => fn(text)) }
 
+  /**
+   * A red pill with no words is unreadable — it looks exactly like a recording
+   * that will not stop. Whatever ended the turn always says why, so say it: to
+   * the console for us, and to the UI for whoever is standing in front of it.
+   */
+  #fail(message: string): void {
+    console.error('[voicer] turn failed:', message)
+    this.#failHandlers.forEach((fn) => fn(message))
+    this.#machine.send({ type: 'FAIL', message })
+  }
+
   micClick(): void {
     const before = this.#machine.state
+
+    // The transcript is already on its way back; a second click means nothing.
+    if (before === 'transcribing') return
+
+    // Clicking while it is working means "stop that and listen to me". Without
+    // it, anything that fails to reach idle — a backend that never returns, an
+    // agent that hangs — leaves the button dead with no way back.
+    if (WORKING.has(before)) this.abort()
+
     const after = this.#machine.send({ type: 'MIC_CLICK' })
 
     if (after === 'listening' && before !== 'listening') {
       this.#answer = ''
+      this.#failHandlers.forEach((fn) => fn(''))
       void this.#listen()
     } else if (after === 'transcribing') {
       this.deps.sidecar.listenStop()
     }
   }
 
+  /** Run a turn from typed text, with no microphone involved. */
+  submit(text: string): void {
+    const prompt = text.trim()
+    if (!prompt) return
+
+    // Same courtesy as the mic: whatever is running gives way.
+    if (this.#machine.state !== 'idle' && this.#machine.state !== 'error') this.abort()
+
+    this.#answer = ''
+    this.#failHandlers.forEach((fn) => fn(''))
+    if (this.#machine.send({ type: 'SUBMIT', text: prompt }) !== 'capturing') return
+    void this.#runTurn(prompt)
+  }
+
   abort(): void {
+    // The recogniser is still holding the microphone open until told otherwise.
+    this.deps.sidecar.listenStop()
     this.deps.agent.abort()
     this.deps.tts.abort()
     this.#machine.send({ type: 'ABORT' })
@@ -87,7 +129,7 @@ export class Orchestrator {
       if (this.#machine.send({ type: 'TRANSCRIPT', text: transcript }) !== 'capturing') return
       await this.#runTurn(transcript)
     } catch (err) {
-      this.#machine.send({ type: 'FAIL', message: String(err) })
+      this.#fail(err instanceof Error ? err.message : String(err))
     }
   }
 

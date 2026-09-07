@@ -1,7 +1,6 @@
 import { app, BrowserWindow, ipcMain, globalShortcut, screen } from 'electron'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readFileSync, writeFileSync } from 'node:fs'
 import { windowOptions, PILL_WIDTH, PILL_HEIGHT } from './window'
 import { SidecarClient } from './sidecar'
 import { AgentClient } from './agent'
@@ -11,51 +10,77 @@ import { createControlServer } from './control-server'
 import { TtsRouter } from './tts/router'
 import { FishBackend } from './tts/fish'
 import { AppleBackend } from './tts/apple'
-import { loadConfig, configDir } from './config'
+import { loadConfig, saveConfig, configDir, resolveClaudePath, resolveAgentCwd } from './config'
+import { placeIn, alignmentAwayFrom, type Alignment } from './placement'
+import type { VoicerConfig } from './config'
 import type { TtsBackend } from './tts/types'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const POSITION_FILE = join(configDir(), 'window.json')
-
-const savedPosition = (): { x: number; y: number } | undefined => {
-  try {
-    return JSON.parse(readFileSync(POSITION_FILE, 'utf8'))
-  } catch {
-    return undefined
-  }
-}
-
 app.whenReady().then(() => {
-  const config = loadConfig()
+  let settings = loadConfig()
 
-  // Default position: bottom-right of the primary display, clear of the Dock.
-  const { workArea } = screen.getPrimaryDisplay()
-  const fallback = {
-    x: workArea.x + workArea.width - PILL_WIDTH - 24,
-    y: workArea.y + workArea.height - PILL_HEIGHT - 24,
-  }
+  const area = () => screen.getPrimaryDisplay().workArea
+
+  /** What the user chose, and where it actually is — the two differ while it is
+   *  standing aside for something the agent needs to reach. */
+  let preferred: Alignment = settings.window.alignment
+  let alignment: Alignment = preferred
+  let size = { width: PILL_WIDTH, height: PILL_HEIGHT }
 
   const win = new BrowserWindow(
-    windowOptions(join(here, '../preload/index.mjs'), savedPosition() ?? fallback),
+    windowOptions(join(here, '../preload/index.mjs'), placeIn(area(), size, alignment)),
   )
 
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   win.setAlwaysOnTop(true, 'screen-saver')
-  win.on('moved', () => {
-    const [x, y] = win.getPosition()
-    try {
-      writeFileSync(POSITION_FILE, JSON.stringify({ x, y }))
-    } catch {
-      // Losing the window position is not worth failing a session over.
-    }
+  const place = () => win.setBounds({ ...placeIn(area(), size, alignment), ...size })
+
+  const setAlignment = (next: Alignment) => {
+    if (next === alignment) return
+    alignment = next
+    place()
+    win.webContents.send('align', alignment)
+  }
+
+  // The renderer measures itself and the window follows, so the transparent
+  // area never covers more of the screen than the capsule actually draws on.
+  ipcMain.on('content-size', (_e, w: number, h: number) => {
+    const width = Math.max(1, Math.ceil(w))
+    const height = Math.max(1, Math.ceil(h))
+    if (size.width === width && size.height === height) return
+    size = { width, height }
+    place()
   })
+
+  /**
+   * Voicer floats above everything — including whatever it is being asked to
+   * drive. A click landing under the capsule would hit the capsule, so it steps
+   * to whichever alignment is furthest from the target and goes back to the one
+   * you chose when the turn is over.
+   */
+  const avoid = (x: number, y: number, shot?: { w: number; h: number }) => {
+    if (!settings.window.autoMove) return
+    const display = screen.getPrimaryDisplay()
+    // Click coordinates are in the screenshot's space, not the display's.
+    const scale = shot && shot.w > 0 ? display.bounds.width / shot.w : 1
+    const moved = alignmentAwayFrom(
+      area(), size, alignment,
+      display.bounds.x + x * scale,
+      display.bounds.y + y * scale,
+    )
+    if (moved) setAlignment(moved)
+  }
 
   const sidecarPath = app.isPackaged
     ? join(process.resourcesPath, 'voicerkit')
     : join(app.getAppPath(), 'native/voicerkit/.build/debug/voicerkit')
 
   console.log('[voicer] sidecar:', sidecarPath, 'packaged:', app.isPackaged)
-  const sidecar = new SidecarClient(sidecarPath)
+  const sidecar = new SidecarClient(sidecarPath, [], settings.listen.silenceMs)
+  sidecar.captureOptions = {
+    maxEdge: settings.capture.maxEdgePx,
+    quality: settings.capture.quality,
+  }
   sidecar.onError((err) => console.error('[voicer] sidecar failure:', err.message))
   sidecar.start()
 
@@ -67,10 +92,10 @@ app.whenReady().then(() => {
     })
 
   const backends: TtsBackend[] = []
-  if (config.tts.backend === 'fish' && config.tts.fishApiKey) {
+  if (settings.tts.backend === 'fish' && settings.tts.fishApiKey) {
     backends.push(
       new FishBackend(
-        { apiKey: config.tts.fishApiKey, voiceId: config.tts.voiceId },
+        { apiKey: settings.tts.fishApiKey, voiceId: settings.tts.voiceId },
         playAudio,
       ),
     )
@@ -80,32 +105,94 @@ app.whenReady().then(() => {
 
   const log = new ActionLog(join(configDir(), 'actions.jsonl'))
 
+  const claudePath = resolveClaudePath(settings.claudePath)
+  const agentCwd = resolveAgentCwd(settings.agentCwd)
+  console.log('[voicer] claude:', claudePath ?? 'NOT FOUND', '· cwd:', agentCwd)
+
   let reportAction: (tool: string) => void = () => {}
   const controlServer = createControlServer({
     sidecar,
     log,
     onAction: (tool) => reportAction(tool),
+    avoid,
   })
+
+  const agent = new AgentClient({ log, controlServer, claudePath, cwd: agentCwd })
 
   const orchestrator = new Orchestrator({
     sidecar,
-    agent: new AgentClient({ log, controlServer }),
+    agent,
     tts: new TtsRouter(backends),
   })
 
-  orchestrator.onState((s) => win.webContents.send('state', s))
+  ipcMain.handle('usage', () => agent.usage)
+  ipcMain.handle('settings:get', () => settings)
+  ipcMain.handle('settings:set', (_e, patch: Partial<VoicerConfig>) => {
+    try {
+      settings = saveConfig(patch)
+    } catch (err) {
+      // Reported both ways: to the log for us, and to the panel for the user.
+      console.error('[voicer] could not save settings:', err)
+      throw err
+    }
+
+    preferred = settings.window.alignment
+    setAlignment(preferred)
+
+    // Applied live. Everything else — voice, paths — is read at startup.
+    sidecar.listenSilenceMs = settings.listen.silenceMs
+    sidecar.captureOptions = {
+      maxEdge: settings.capture.maxEdgePx,
+      quality: settings.capture.quality,
+    }
+    globalShortcut.unregisterAll()
+    if (!globalShortcut.register(settings.hotkeys.kill, () => orchestrator.abort())) {
+      console.warn(`[voicer] could not register kill hotkey ${settings.hotkeys.kill}`)
+    }
+    return settings
+  })
+
+  orchestrator.onState((s) => {
+    console.log('[voicer] state:', s)
+    // The turn is over; go back to where you were asked to sit.
+    if (s === 'idle') setAlignment(preferred)
+    win.webContents.send('state', s)
+  })
   orchestrator.onPartial((t, l) => win.webContents.send('partial', t, l))
   orchestrator.onAnswer((t) => win.webContents.send('answer', t))
   orchestrator.onStatus((t) => win.webContents.send('status', t))
+  orchestrator.onFail((m) => win.webContents.send('fail', m))
   reportAction = (tool) => win.webContents.send('status', `${tool}…`)
 
   ipcMain.on('mic-click', () => orchestrator.micClick())
   ipcMain.on('abort', () => orchestrator.abort())
+  ipcMain.on('submit', (_e, text: string) => orchestrator.submit(text))
+  // will-quit stops the sidecar and releases the global hotkey.
+  ipcMain.on('quit', () => app.quit())
+
+  /**
+   * The window is deliberately unfocusable so typing carries on in the app
+   * underneath — which also means a text field in it can never receive a
+   * keystroke. Composing is the one moment Voicer is allowed the keyboard, and
+   * it gives it straight back.
+   */
+  ipcMain.on('compose-open', () => {
+    win.setFocusable(true)
+    win.focus()
+  })
+  ipcMain.on('compose-close', () => {
+    win.blur()
+    win.setFocusable(false)
+  })
 
   // The kill switch must work while another app owns the keyboard, so it is global.
-  if (!globalShortcut.register(config.hotkeys.kill, () => orchestrator.abort())) {
-    console.warn(`[voicer] could not register kill hotkey ${config.hotkeys.kill}`)
+  if (!globalShortcut.register(settings.hotkeys.kill, () => orchestrator.abort())) {
+    console.warn(`[voicer] could not register kill hotkey ${settings.hotkeys.kill}`)
   }
+
+  // After the page exists, not before: a send to a webContents that has not
+  // loaded yet goes nowhere, and the renderer never learns which edge it is on.
+  win.webContents.on('did-finish-load', () => win.webContents.send('align', alignment))
 
   win.loadFile(join(here, '../renderer/index.html'))
 

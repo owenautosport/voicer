@@ -9,6 +9,12 @@ export type ControlDeps = {
   log: ActionLog
   onAction: (tool: string) => void
   readImage?: (path: string) => Buffer
+  /**
+   * Called before a pointer action with the target in screenshot coordinates,
+   * so the capsule can move if it is sitting on top of what the agent is trying
+   * to click. Voicer floats above everything, including whatever it is driving.
+   */
+  avoid?: (x: number, y: number, shot?: { w: number; h: number }) => Promise<void> | void
 }
 
 type ToolResult = {
@@ -42,9 +48,13 @@ const failure = (err: unknown): ToolResult => ({
  */
 export function buildControlTools(deps: ControlDeps): ControlTool[] {
   const read = deps.readImage ?? readFileSync
+  let lastShot: { w: number; h: number } | undefined
 
   /** Every action is logged before it is reported — the log must not lose a call that then failed. */
   const act = async (name: string, args: Record<string, unknown>): Promise<ToolResult> => {
+    if (deps.avoid && typeof args.x === 'number' && typeof args.y === 'number') {
+      await deps.avoid(args.x, args.y, lastShot)
+    }
     deps.log.append({ tool: name, input: args })
     deps.onAction(name)
     try {
@@ -67,6 +77,7 @@ export function buildControlTools(deps: ControlDeps): ControlTool[] {
         deps.onAction('screenshot')
         try {
           const shot = await deps.sidecar.capture()
+          lastShot = { w: shot.w, h: shot.h }
           deps.log.append({ tool: 'screenshot', w: shot.w, h: shot.h })
           return {
             content: [

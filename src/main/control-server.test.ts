@@ -82,4 +82,24 @@ describe('control tools', () => {
     expect(out.isError).toBe(true)
     expect(JSON.stringify(out.content)).toContain('declined TCC')
   })
+
+  it('gets out of the way before clicking where it might be sitting', async () => {
+    const seen: unknown[] = []
+    const tools = buildControlTools(deps({
+      avoid: (x: number, y: number, shot?: { w: number; h: number }) => {
+        seen.push({ x, y, shot })
+      },
+    }))
+    await tools.find((t) => t.name === 'screenshot')!.handler({} as never)
+    await tools.find((t) => t.name === 'click')!.handler({ x: 12, y: 34 } as never)
+    expect(seen).toEqual([{ x: 12, y: 34, shot: { w: 1280, h: 800 } }])
+  })
+
+  it('does not consult the mover for actions that have no point', async () => {
+    let called = 0
+    const tools = buildControlTools(deps({ avoid: () => { called += 1 } }))
+    await tools.find((t) => t.name === 'type')!.handler({ text: 'hi' } as never)
+    await tools.find((t) => t.name === 'key')!.handler({ combo: 'cmd+s' } as never)
+    expect(called).toBe(0)
+  })
 })

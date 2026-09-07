@@ -24,9 +24,29 @@ anything on screen changes.
 
 type QueryFn = typeof sdkQuery
 
+/** What this run of Voicer has spent, as an estimate rather than a bill. */
+export type UsageTotals = {
+  turns: number
+  costUsd: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  models: string[]
+}
+
+const noUsage = (): UsageTotals => ({
+  turns: 0, costUsd: 0, inputTokens: 0, outputTokens: 0,
+  cacheReadTokens: 0, cacheWriteTokens: 0, models: [],
+})
+
 export type AgentOptions = {
   log: ActionLog
   controlServer: unknown
+  /** The installed Claude Code binary; see resolveClaudePath. */
+  claudePath?: string
+  /** Where the session runs; see resolveAgentCwd. */
+  cwd?: string
   query?: QueryFn
   readImage?: (path: string) => Buffer
 }
@@ -40,11 +60,40 @@ export type AgentOptions = {
 export class AgentClient {
   #sessionId?: string
   #controller?: AbortController
+  #usage: UsageTotals = noUsage()
 
   constructor(private readonly opts: AgentOptions) {}
 
   get sessionId(): string | undefined {
     return this.#sessionId
+  }
+
+  get usage(): UsageTotals {
+    return { ...this.#usage, models: [...this.#usage.models] }
+  }
+
+  /**
+   * Each turn is its own `query()` call. A result carries the running total for
+   * that call, and a resumed session starts its counters from zero — so the
+   * total across a conversation is the sum of the per-turn results, not the
+   * last one.
+   */
+  #record(message: Record<string, any>): void {
+    this.#usage.turns += 1
+
+    const perModel = (message.modelUsage ?? {}) as Record<string, Record<string, number>>
+    let modelCost = 0
+    for (const [model, u] of Object.entries(perModel)) {
+      this.#usage.inputTokens += u.inputTokens ?? 0
+      this.#usage.outputTokens += u.outputTokens ?? 0
+      this.#usage.cacheReadTokens += u.cacheReadInputTokens ?? 0
+      this.#usage.cacheWriteTokens += u.cacheCreationInputTokens ?? 0
+      modelCost += u.costUSD ?? 0
+      if (!this.#usage.models.includes(model)) this.#usage.models.push(model)
+    }
+
+    this.#usage.costUsd +=
+      typeof message.total_cost_usd === 'number' ? message.total_cost_usd : modelCost
   }
 
   abort(): void {
@@ -53,6 +102,14 @@ export class AgentClient {
   }
 
   async run(transcript: string, imagePath: string | undefined, cb: AgentCallbacks): Promise<void> {
+    if (!this.opts.claudePath) {
+      cb.onError(new Error(
+        'Claude Code was not found on this Mac. Install it, or set "claudePath" '
+        + 'in ~/.voicer/config.json.',
+      ))
+      return
+    }
+
     const controller = new AbortController()
     this.#controller = controller
     const run = this.opts.query ?? sdkQuery
@@ -66,6 +123,9 @@ export class AgentClient {
           // The SDK refuses bypassPermissions without this explicit acknowledgement.
           allowDangerouslySkipPermissions: true,
           abortController: controller,
+          // Never the SDK's bundled CLI: inside app.asar it is not a real path.
+          pathToClaudeCodeExecutable: this.opts.claudePath,
+          ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
           ...(this.#sessionId ? { resume: this.#sessionId } : {}),
           systemPrompt: { type: 'preset', preset: 'claude_code', append: SPOKEN_STYLE },
           // Named `voicer-control`: `computer-use` is reserved by the CLI, which
@@ -90,6 +150,7 @@ export class AgentClient {
         }
         if (message.type === 'result') {
           this.#sessionId = message.session_id ?? this.#sessionId
+          this.#record(message)
           cb.onDone(this.#sessionId ?? '')
         }
       }

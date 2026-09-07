@@ -13,3 +13,6 @@ native/voicerkit/*.xcodeproj
 *.jpg
 *.mp3
 native/voicerkit/.build/
+
+# generated from build/icon.png; the .png and .icns are tracked
+build/icon.iconset/

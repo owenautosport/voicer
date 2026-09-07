@@ -21,6 +21,9 @@ struct Request: Codable {
     let dy: Int?
     let button: String?
     let combo: String?
+    let silenceMs: Int?
+    let maxEdge: Int?
+    let quality: Int?
 
     static func decode(_ line: String) throws -> Request {
         try JSONDecoder().decode(Request.self, from: Data(line.utf8))

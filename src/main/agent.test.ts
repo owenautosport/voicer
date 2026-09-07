@@ -20,12 +20,27 @@ const assistantTool = (name: string, input: unknown) => ({
   type: 'assistant', session_id: 's1', message: { content: [{ type: 'tool_use', name, input }] },
 })
 const result = () => ({ type: 'result', subtype: 'success', is_error: false, session_id: 's1' })
+const costed = (costUsd: number, tokens: Partial<Record<string, number>> = {}) => ({
+  type: 'result', subtype: 'success', is_error: false, session_id: 's1',
+  total_cost_usd: costUsd,
+  modelUsage: {
+    'claude-opus-5': {
+      inputTokens: tokens.input ?? 0,
+      outputTokens: tokens.output ?? 0,
+      cacheReadInputTokens: tokens.cacheRead ?? 0,
+      cacheCreationInputTokens: tokens.cacheWrite ?? 0,
+      costUSD: costUsd,
+    },
+  },
+})
 
 const CONTROL = { type: 'sdk', name: 'voicer-control' }
 
+const CLAUDE = '/usr/local/bin/claude'
+
 const make = (query: unknown, extra: Record<string, unknown> = {}) =>
   new AgentClient({
-    log: new ActionLog(logPath()), controlServer: CONTROL,
+    log: new ActionLog(logPath()), controlServer: CONTROL, claudePath: CLAUDE,
     query: query as never, ...extra,
   })
 
@@ -73,7 +88,9 @@ describe('AgentClient', () => {
   it('logs every tool call', async () => {
     const path = logPath()
     const query = stream([assistantTool('type', { text: 'hi' }), result()])
-    const c = new AgentClient({ log: new ActionLog(path), controlServer: CONTROL, query: query as never })
+    const c = new AgentClient({
+      log: new ActionLog(path), controlServer: CONTROL, claudePath: CLAUDE, query: query as never,
+    })
     await c.run('go', undefined, callbacks())
     expect(readFileSync(path, 'utf8')).toContain('"tool":"type"')
   })
@@ -127,5 +144,54 @@ describe('AgentClient', () => {
     const cb = callbacks()
     await client.run('go', undefined, cb)
     expect(cb.onError).not.toHaveBeenCalled()
+  })
+
+  it('drives the installed Claude Code binary, not the SDK bundled one', async () => {
+    // The bundled CLI resolves to a path inside app.asar, which is a file:
+    // spawning it fails with ENOTDIR before the agent ever starts.
+    const query = stream([assistantText('hi'), result()])
+    await make(query).run('hello', undefined, callbacks())
+    expect(optionsOf(query).pathToClaudeCodeExecutable).toBe(CLAUDE)
+  })
+
+  it('says so plainly when Claude Code cannot be found', async () => {
+    const query = stream([assistantText('hi'), result()])
+    const cb = callbacks()
+    await make(query, { claudePath: undefined }).run('hello', undefined, cb)
+    expect(query).not.toHaveBeenCalled()
+    expect(cb.onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining('claudePath') }),
+    )
+  })
+
+  it('starts with nothing spent', () => {
+    expect(make(stream([])).usage).toMatchObject({ turns: 0, costUsd: 0, inputTokens: 0 })
+  })
+
+  it('accumulates tokens and cost across turns', async () => {
+    // Each turn is its own query() call — a resumed session starts its counters
+    // fresh — so the running total is the sum of the per-turn results.
+    const c = make(stream([costed(0.02, { input: 100, output: 20, cacheRead: 900 })]))
+    await c.run('one', undefined, callbacks())
+    await c.run('two', undefined, callbacks())
+    expect(c.usage).toMatchObject({
+      turns: 2, inputTokens: 200, outputTokens: 40, cacheReadTokens: 1800,
+    })
+    expect(c.usage.costUsd).toBeCloseTo(0.04, 6)
+    expect(c.usage.models).toEqual(['claude-opus-5'])
+  })
+
+  it('counts a turn even when the result carries no usage at all', async () => {
+    const c = make(stream([result()]))
+    await c.run('one', undefined, callbacks())
+    expect(c.usage).toMatchObject({ turns: 1, costUsd: 0, inputTokens: 0 })
+  })
+
+  it('runs the session in the directory it is given', async () => {
+    // The working directory is what makes ~/SecondBrain as reachable to Voicer
+    // as to any other Claude Code session; Electron's own is usually "/".
+    const query = stream([assistantText('hi'), result()])
+    await make(query, { cwd: '/Users/someone' }).run('hello', undefined, callbacks())
+    expect(optionsOf(query).cwd).toBe('/Users/someone')
   })
 })

@@ -4,6 +4,7 @@ export type TurnState =
 
 export type TurnEvent =
   | { type: 'MIC_CLICK' }
+  | { type: 'SUBMIT'; text: string }
   | { type: 'TRANSCRIPT'; text: string }
   | { type: 'CAPTURED'; path: string }
   | { type: 'AGENT_TEXT'; text: string }
@@ -66,7 +67,12 @@ export class TurnMachine {
     switch (this.#state) {
       case 'idle':
       case 'error':
-        return event.type === 'MIC_CLICK' ? 'listening' : this.#state
+        if (event.type === 'MIC_CLICK') return 'listening'
+        // A typed prompt skips the ears entirely: there is nothing to hear.
+        if (event.type === 'SUBMIT') {
+          return event.text.trim() === '' ? this.#state : 'capturing'
+        }
+        return this.#state
 
       case 'listening':
         return event.type === 'MIC_CLICK' ? 'transcribing' : this.#state

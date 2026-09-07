@@ -169,6 +169,48 @@ describe('Orchestrator', () => {
     expect(o.state).toBe('listening')
   })
 
+  it('reports why a listen failed, rather than only going red', async () => {
+    // The red pill on its own is unreadable: it looks identical to a recording
+    // that will not stop. The sidecar always says why; that reason must reach
+    // the user.
+    const d = deps({
+      sidecar: {
+        listenStart: vi.fn(async () => {
+          throw new Error('listen_failed: onDeviceUnavailable')
+        }),
+      },
+    })
+    const o = new Orchestrator(d)
+    const failures: string[] = []
+    o.onFail((m) => failures.push(m))
+    o.micClick(); await settle()
+    expect(failures.filter(Boolean)).toEqual([
+      expect.stringContaining('onDeviceUnavailable'),
+    ])
+  })
+
+  it('reports a sidecar crash as a failure with a reason', async () => {
+    let crash: (() => void) | undefined
+    const d = deps({ sidecar: { onCrash: vi.fn((fn: () => void) => { crash = fn }) } })
+    const o = new Orchestrator(d)
+    const failures: string[] = []
+    o.onFail((m) => failures.push(m))
+    crash!()
+    expect(failures).toEqual([expect.stringContaining('sidecar')])
+  })
+
+  it('clears the last failure when a new turn starts', async () => {
+    const d = deps({ sidecar: { listenStart: vi.fn(async () => { throw new Error('no mic') }) } })
+    const o = new Orchestrator(d)
+    const failures: string[] = []
+    o.onFail((m) => failures.push(m))
+    o.micClick(); await settle()
+    expect(failures).toEqual(['', 'no mic'])
+    // Starting the next turn wipes the stale reason before it can fail again.
+    o.micClick()
+    expect(failures).toEqual(['', 'no mic', ''])
+  })
+
   it('forwards partial transcripts and mic level to the UI', async () => {
     const d = deps({
       sidecar: {
@@ -195,5 +237,31 @@ describe('Orchestrator', () => {
     await settle()
     expect(d.agent.run).toHaveBeenCalledWith('it stopped by itself', '/tmp/a.jpg', expect.anything())
     expect(o.state).toBe('idle')
+  })
+
+  it('a click while it is working interrupts and starts a new turn', async () => {
+    // Whatever wedges — a backend that never returns, an agent that hangs — the
+    // button must never become a dead end. Clicking means "stop that, listen".
+    const d = deps({ agent: { run: vi.fn(() => new Promise<void>(() => {})), abort: vi.fn() } })
+    const o = new Orchestrator(d)
+    o.micClick(); await settle()
+    o.micClick(); await settle()
+    expect(o.state).toBe('thinking')
+
+    o.micClick(); await settle()
+    expect(d.agent.abort).toHaveBeenCalled()
+    expect(d.tts.abort).toHaveBeenCalled()
+    expect(o.state).toBe('listening')
+    expect(d.sidecar.listenStart).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores a click while the transcript is still on its way back', async () => {
+    const d = deps()
+    const o = new Orchestrator(d)
+    o.micClick(); await settle()
+    o.micClick()
+    expect(o.state).toBe('transcribing')
+    o.micClick()
+    expect(o.state).toBe('transcribing')
   })
 })

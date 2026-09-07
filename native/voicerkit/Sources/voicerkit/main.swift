@@ -1,6 +1,7 @@
 import Foundation
 import Speech
 import AppKit
+import AVFoundation
 
 if CommandLine.arguments.contains("--self-test") {
     SelfTest.run()
@@ -18,8 +19,16 @@ func emit(_ event: Event) {
 let listener = Listener()
 let speaker = Speaker()
 
-// Puts Voicer in the Accessibility list so the user can grant it before the
-// agent ever needs to click anything.
+// What we already hold, before anything asks for anything. "I think it already
+// has that" is otherwise unanswerable: an ad-hoc signature changes on every
+// build, so a grant given to the last build does not carry to this one.
+FileHandle.standardError.write(Data((
+    "permissions: accessibility=\(AXIsProcessTrusted()) "
+  + "mic=\(AVCaptureDevice.authorizationStatus(for: .audio).rawValue) "
+  + "speech=\(SFSpeechRecognizer.authorizationStatus().rawValue)\n").utf8))
+
+// Only prompts when the grant is genuinely absent; puts Voicer in the
+// Accessibility list so it can be granted before the agent needs to click.
 Control.promptIfUntrusted()
 
 /// Speech synthesis and the audio engine both need a live run loop. Reading
@@ -41,7 +50,11 @@ let reader = Thread {
             let sem = DispatchSemaphore(value: 0)
             Task {
                 do {
-                    let (path, w, h) = try await captureMainDisplay(maxEdge: 1280, quality: 0.7)
+                    // Sent per request: the settings live on the Electron side,
+                    // and hardcoding them here made config.capture a dead letter.
+                    let (path, w, h) = try await captureMainDisplay(
+                        maxEdge: request.maxEdge ?? 1280,
+                        quality: Double(request.quality ?? 70) / 100)
                     emit(.captured(id: request.id, path: path, w: w, h: h))
                 } catch {
                     emit(.error(id: request.id, code: "capture_failed", message: "\(error)"))
@@ -59,7 +72,7 @@ let reader = Thread {
                     SFSpeechRecognizer.requestAuthorization { _ in sem.signal() }
                     sem.wait()
                 }
-                try listener.start(id: request.id, emit: emit)
+                try listener.start(id: request.id, silenceMs: request.silenceMs, emit: emit)
             } catch {
                 emit(.error(id: request.id, code: "listen_failed", message: "\(error)"))
             }

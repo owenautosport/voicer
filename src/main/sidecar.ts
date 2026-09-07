@@ -28,7 +28,12 @@ export class SidecarClient {
   constructor(
     private readonly binary: string,
     private readonly args: string[] = [],
+    /** How long a pause ends the sentence; the sidecar's default if unset. */
+    public listenSilenceMs?: number,
   ) {}
+
+  /** Screenshot size and JPEG quality; the sidecar's defaults if unset. */
+  captureOptions?: { maxEdge: number; quality: number }
 
   start(): void {
     const proc = spawn(this.binary, this.args, { stdio: ['pipe', 'pipe', 'pipe'] })
@@ -123,7 +128,10 @@ export class SidecarClient {
   }
 
   listenStart(onPartial: (text: string, level: number) => void): Promise<string> {
-    const { id, done } = this.#request('listen_start')
+    const { id, done } = this.#request(
+      'listen_start',
+      this.listenSilenceMs === undefined ? {} : { silenceMs: this.listenSilenceMs },
+    )
     this.#listenId = id
     this.#onPartial.set(id, onPartial)
     return done.then((e) => (e.event === 'final' ? e.text : ''))
@@ -136,7 +144,7 @@ export class SidecarClient {
   }
 
   async capture(): Promise<{ path: string; w: number; h: number }> {
-    const e = await this.#request('capture').done
+    const e = await this.#request('capture', this.captureOptions ?? {}).done
     if (e.event !== 'captured') throw new Error('unexpected reply to capture')
     return { path: e.path, w: e.w, h: e.h }
   }

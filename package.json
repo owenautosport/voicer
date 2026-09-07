@@ -8,7 +8,13 @@
     "typecheck": "tsc --noEmit",
     "sidecar": "./scripts/build-sidecar.sh",
     "dev": "npm run sidecar && electron-vite dev",
-    "build": "npm run sidecar -- -c release && electron-vite build && electron-builder"
+    "build": "npm run sidecar -- -c release && electron-vite build && electron-builder && npm run sign",
+    "sign": "./scripts/sign.sh",
+    "reset-permissions": "tccutil reset Microphone uk.co.owenprice.voicer; tccutil reset SpeechRecognition uk.co.owenprice.voicer",
+    "reset-permissions-all": "npm run reset-permissions; tccutil reset ScreenCapture uk.co.owenprice.voicer; tccutil reset Accessibility uk.co.owenprice.voicer",
+    "signing-identity": "./scripts/make-signing-identity.sh",
+    "icon": "./scripts/make-icon.sh",
+    "dist": "npm run build && rm -f dist/Voicer-macOS.zip && ditto -c -k --sequesterRsrc --keepParent dist/mac/Voicer.app dist/Voicer-macOS.zip"
   },
   "repository": {
     "type": "git",
@@ -51,7 +57,8 @@
         "NSMicrophoneUsageDescription": "Voicer listens when you press its microphone button.",
         "NSSpeechRecognitionUsageDescription": "Voicer transcribes your speech on this Mac, without sending audio anywhere.",
         "LSUIElement": true
-      }
+      },
+      "icon": "build/icon.icns"
     },
     "extraResources": [
       {

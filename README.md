@@ -4,10 +4,10 @@ A small microphone button that floats above everything on your Mac. Click it, ta
 it again. Voicer sees what is on your screen, answers out loud, and — when you ask it to —
 takes over the mouse and keyboard and does the thing for you.
 
-> **Status: built, not yet verified end to end.** The app builds, launches, and runs its
-> sidecar; 92 unit tests and a 21-check sidecar self-test pass. What has *not* been confirmed
-> is a full spoken turn on real hardware — that needs the macOS permissions below granted
-> first. See [the design](docs/superpowers/specs/2026-08-30-voicer-design.md) and
+> **Status: a spoken turn works end to end.** Click, ask a question about what is on screen,
+> hear the answer — verified on real hardware. 131 unit tests and a 21-check sidecar self-test
+> pass. Still unverified: the agent driving a native app or Chrome unattended (success criteria
+> 2 and 3). See [the design](docs/superpowers/specs/2026-08-30-voicer-design.md) and
 > [the plan](docs/superpowers/plans/2026-08-30-voicer-v1.md).
 
 ## Why
@@ -21,12 +21,15 @@ stuck on, it can already see it, and you never have to stop looking at your work
 
 ```
 click mic  ──▶  listen        on-device speech recognition, partials stream live
-click mic  ──▶  stop          final transcript
+stop talking ▶  stop          a pause ends the turn; clicking again also works
            ──▶  capture       screen grab, downscaled
            ──▶  think         Claude Code agent session (transcript + screenshot)
            ──▶  speak         answer streams out sentence by sentence
            ──▶  act           mouse and keyboard, if the answer needs doing
 ```
+
+Typing works too: the keyboard button opens a compose box and skips the microphone
+entirely. Clicking the capsule while it is working means "stop that and listen to me".
 
 Three processes:
 
@@ -76,7 +79,11 @@ Owning the executor turns out to be the better end state anyway. Claude Code's s
 at read-only and terminals at click-only, so it can *see* Chrome but not type into it. Voicer's has
 no such tier — Chrome and Terminal are controllable like anything else.
 
-Voicer runs the agent with permissions bypassed — it acts rather than asking first. The rails
+Because the capsule floats above everything — including whatever it is being asked to drive —
+it checks before every pointer action whether it is sitting on the target, and moves to the
+furthest alignment if it is, returning to the one you chose when the turn ends.
+
+The agent runs with permissions bypassed — it acts rather than asking first. The rails
 against that are visibility and reversibility, not confirmation prompts:
 
 - a global kill hotkey (<kbd>⌥</kbd><kbd>⌘</kbd><kbd>.</kbd>) that aborts mid-action,
@@ -85,14 +92,29 @@ against that are visibility and reversibility, not confirmation prompts:
 
 ## Permissions
 
-macOS gates everything Voicer does. Two grants are manual:
+**The app must be code signed, or macOS refuses everything without asking.** An unsigned
+bundle is not prompted for the microphone, screen recording or accessibility — TCC simply
+answers "denied", and Voicer hears silence and sees nothing. Worse, a grant is remembered
+against the signature, so ad-hoc signing (a fresh hash every build) makes each rebuild a
+different app that silently loses the permissions the last one was given, while the row in
+System Settings stays switched on.
+
+`npm run signing-identity` creates a stable self-signed identity once; every build is signed
+with it, and the grants then survive rebuilds — and moving the app to `/Applications`.
+
+macOS gates everything else too. Two grants are manual:
 
 | Pane | Manual? | Without it |
 | --- | --- | --- |
 | **Accessibility** | **Yes** | No clicking, typing or scrolling — no computer control at all |
 | **Screen Recording** | **Yes** | Voicer cannot see your screen |
-| Microphone | Prompted | No listening |
+| Microphone | Prompted | No listening — a silent, flat level meter |
 | Speech Recognition | Prompted | No transcription |
+
+**Dictation must be switched on** (System Settings → Keyboard → Dictation, English (UK)):
+that is what installs the offline speech model. Without it the recogniser returns
+`kLSRErrorDomain 201, "Siri and Dictation are disabled"`, which Voicer translates into the
+setting you need to change.
 
 Grant these to the **app bundle**, never to `voicerkit`. The sidecar is a child process, so macOS
 attributes its requests to the parent and `voicerkit` never appears in the list.
@@ -109,7 +131,10 @@ then run `dist/mac/Voicer.app`.
 ## Requirements
 
 - macOS 26 or later
-- [Claude Code](https://claude.com/claude-code) installed and signed in
+- [Claude Code](https://claude.com/claude-code) installed and signed in — Voicer drives the
+  installed binary, never the SDK's bundled copy, which inside `app.asar` is not a real path
+  and dies with `spawn ENOTDIR`
+- Dictation switched on, for the offline speech model
 - Node 20+
 - Swift toolchain (ships with the Xcode Command Line Tools — full Xcode is not required)
 - Accessibility permission, granted once on first use, so Voicer can move the mouse and keyboard
@@ -121,8 +146,8 @@ Apple Silicon works too, it just is not required.
 
 ## Configuration
 
-Configuration lives in `~/.voicer/config.json`, outside the repository. No credentials are ever
-stored in the project.
+Everything is editable from the gear button on the capsule, and lives in
+`~/.voicer/config.json` outside the repository. No credentials are ever stored in the project.
 
 ```jsonc
 {
@@ -131,15 +156,33 @@ stored in the project.
     "fishApiKey": "…",           // from https://fish.audio/app/api-keys/
     "voiceId": "…"
   },
+  "listen": { "silenceMs": 2000 },        // pause that ends a turn; 0 disables auto-stop
+  "window": {
+    "alignment": "top",                   // any edge centre or corner
+    "autoMove": true                      // step aside when the agent needs to click underneath
+  },
   "hotkeys": { "kill": "Alt+Command+." },
-  "capture": { "maxEdgePx": 1280, "quality": 70 }
+  "capture": { "maxEdgePx": 1280, "quality": 70 },
+  "claudePath": "…",                      // found automatically if omitted
+  "agentCwd": "…"                         // defaults to the home directory
 }
+```
+
+Position, auto-move, pause length, hotkey and screenshot settings apply immediately; the voice
+and the paths are read at startup.
+
+## Building
+
+```bash
+npm run signing-identity   # once per machine
+npm run icon               # regenerate build/icon.icns from scripts/make-icon.swift
+npm run dist               # sidecar, bundle, sign, and zip to dist/Voicer-macOS.zip
 ```
 
 ## Not in version one
 
-Wake-word activation, interrupting it mid-sentence, a conversation history view, a graphical
-settings window, notarised distribution, and any platform that is not macOS.
+Wake-word activation, interrupting it mid-sentence, a conversation history view, notarised
+distribution, and any platform that is not macOS.
 
 ## Licence
 

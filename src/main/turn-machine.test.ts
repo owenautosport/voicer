@@ -89,4 +89,27 @@ describe('TurnMachine', () => {
     const m = new TurnMachine()
     expect(m.send({ type: 'CAPTURED', path: '/tmp/a.jpg' })).toBe('idle')
   })
+
+  it('a typed prompt goes straight to capturing, with no listening at all', () => {
+    const m = new TurnMachine()
+    expect(m.send({ type: 'SUBMIT', text: 'what is on my screen' })).toBe('capturing')
+  })
+
+  it('a typed prompt of nothing but whitespace is not a turn', () => {
+    const m = new TurnMachine()
+    expect(m.send({ type: 'SUBMIT', text: '   ' })).toBe('idle')
+  })
+
+  it('accepts a typed prompt after a failure, clearing the error', () => {
+    const m = new TurnMachine()
+    m.send({ type: 'FAIL', message: 'no mic' })
+    expect(m.state).toBe('error')
+    expect(m.send({ type: 'SUBMIT', text: 'type it instead' })).toBe('capturing')
+  })
+
+  it('ignores a typed prompt while a turn is already running', () => {
+    const m = new TurnMachine()
+    m.send({ type: 'MIC_CLICK' })
+    expect(m.send({ type: 'SUBMIT', text: 'hello' })).toBe('listening')
+  })
 })

@@ -9,8 +9,8 @@ afterEach(() => {
   client = undefined
 })
 
-const started = () => {
-  client = new SidecarClient(process.execPath, [FAKE])
+const started = (silenceMs?: number) => {
+  client = new SidecarClient(process.execPath, [FAKE], silenceMs)
   client.start()
   return client
 }
@@ -112,5 +112,26 @@ describe('SidecarClient failure reporting', () => {
     })
     expect(err.message).toMatch(/code 1/)
     c.stop()
+  })
+
+  it('tells the sidecar how long a pause ends the sentence', async () => {
+    // The recogniser hears the room; only it knows when you stopped talking.
+    const c = started(1500)
+    const sent: unknown[] = []
+    const raw = c.sendRaw.bind(c)
+    vi.spyOn(c, 'sendRaw').mockImplementation((r) => { sent.push(r); raw(r) })
+    c.listenStart(() => {}).catch(() => {}) // never finishes; stopped in afterEach
+    await tick()
+    expect(sent[0]).toMatchObject({ cmd: 'listen_start', silenceMs: 1500 })
+  })
+
+  it('omits the pause limit when none is configured, leaving the sidecar default', async () => {
+    const c = started()
+    const sent: unknown[] = []
+    const raw = c.sendRaw.bind(c)
+    vi.spyOn(c, 'sendRaw').mockImplementation((r) => { sent.push(r); raw(r) })
+    c.listenStart(() => {}).catch(() => {}) // never finishes; stopped in afterEach
+    await tick()
+    expect(sent[0]).not.toHaveProperty('silenceMs')
   })
 })
