@@ -1,0 +1,70 @@
+{
+  "name": "voicer",
+  "version": "0.1.0",
+  "description": "A pinned-to-front macOS mic widget",
+  "main": "out/main/index.js",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "sidecar": "./scripts/build-sidecar.sh",
+    "dev": "npm run sidecar && electron-vite dev",
+    "build": "npm run sidecar -- -c release && electron-vite build && electron-builder && npm run sign",
+    "sign": "./scripts/sign.sh",
+    "reset-permissions": "tccutil reset Microphone uk.co.owenprice.voicer; tccutil reset SpeechRecognition uk.co.owenprice.voicer",
+    "reset-permissions-all": "npm run reset-permissions; tccutil reset ScreenCapture uk.co.owenprice.voicer; tccutil reset Accessibility uk.co.owenprice.voicer",
+    "signing-identity": "./scripts/make-signing-identity.sh",
+    "icon": "./scripts/make-icon.sh",
+    "dist": "npm run build && rm -f dist/Voicer-macOS.zip && ditto -c -k --sequesterRsrc --keepParent dist/mac/Voicer.app dist/Voicer-macOS.zip"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/owenautosport/voicer.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/owenautosport/voicer/issues"
+  },
+  "homepage": "https://github.com/owenautosport/voicer#readme",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.251",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
+  },
+  "build": {
+    "appId": "uk.co.owenprice.voicer",
+    "productName": "Voicer",
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dir"
+      ],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Voicer listens when you press its microphone button.",
+        "NSSpeechRecognitionUsageDescription": "Voicer transcribes your speech on this Mac, without sending audio anywhere.",
+        "LSUIElement": true
+      },
+      "icon": "build/icon.icns"
+    },
+    "extraResources": [
+      {
+        "from": "native/voicerkit/.build/release/voicerkit",
+        "to": "voicerkit"
+      }
+    ]
+  }
+}

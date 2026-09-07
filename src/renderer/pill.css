@@ -1,0 +1,596 @@
+/*
+ * A capsule hanging from the top of the screen: closed it is barely a sliver,
+ * and holding a conversation grows it downward — the meter first, then what it
+ * thinks you said.
+ *
+ * Three colours and no more. Black is the app, white is what it is telling you,
+ * and red means it is live — hearing the room, or holding your mouse and
+ * keyboard. Nothing else is ever red, because a red pill that might instead mean
+ * "something went wrong" is exactly how a dead turn came to look like a
+ * recording that would not stop.
+ */
+:root {
+  --ink: #0a0a0b;
+  --paper: #ffffff;
+  --live: #ff342b;
+  --muted: rgba(255, 255, 255, 0.55);
+  --hairline: rgba(255, 255, 255, 0.16);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/*
+ * Shrink-wrapped on purpose: the main process measures this box and makes the
+ * window exactly that size, so there is no invisible margin left sitting on top
+ * of whatever you are actually working in.
+ */
+#app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 0 14px 14px;
+  /*
+   * max-content, not auto. A normal element can never lay out wider than the
+   * window it is in — and since the window is sized from this measurement, an
+   * `auto` width ratchets shut: it shrinks to the idle capsule and then the
+   * viewport clamps every measurement after it, so the capsule can never widen
+   * again. max-content asks for the width the content actually wants, whatever
+   * the window currently is.
+   */
+  width: max-content;
+  /* The surface drags the window; the capsule takes the clicks. */
+  -webkit-app-region: drag;
+}
+
+button { -webkit-app-region: no-drag; }
+
+/* ---------------------------------------------------------------- capsule */
+
+#capsule {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  /* Room for every button that can appear: 5x24 + 4x6 gaps + 24 padding = 168.
+     Sizing this for the buttons visible at rest is what clipped the revealed
+     ones and left the right-hand padding looking narrower than the left. */
+  max-width: 186px;
+  min-height: 34px;
+  padding: 5px 12px;
+  cursor: pointer;
+  /* The whole capsule is the button: a 22px glyph is not a target. */
+  -webkit-app-region: no-drag;
+  overflow: hidden;
+  border-radius: 0 0 16px 16px;
+  background: var(--ink);
+  border: 1px solid var(--hairline);
+  border-top: none;
+  color: var(--paper);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+  transition:
+    max-width 320ms cubic-bezier(0.22, 0.8, 0.24, 1),
+    padding 320ms cubic-bezier(0.22, 0.8, 0.24, 1),
+    gap 320ms cubic-bezier(0.22, 0.8, 0.24, 1),
+    background 180ms ease,
+    border-color 180ms ease;
+}
+
+/*
+ * Open for every state except idle. Listing states individually is how STOP
+ * came to be sliced in half: it is shown from `capturing` through `acting`,
+ * and those states were not on the list, so the capsule snapped back to its
+ * closed width with a button still inside it.
+ */
+[data-state]:not([data-state='idle']) #capsule {
+  /* A floor as well as a ceiling: without one the capsule would twitch wider
+     and narrower on every word as the transcript grows. */
+  min-width: 340px;
+  max-width: 900px;
+  gap: 13px;
+  padding: 10px 18px;
+  border-radius: 0 0 20px 20px;
+}
+[data-state='error'] #capsule { border-color: var(--paper); }
+
+/* The two buttons carry their own spacing, so the capsule's own gap can stay at
+   zero and not open a hole where the hidden meter sits. */
+#tools { display: flex; align-items: center; gap: 6px; flex: none; }
+
+#mic,
+#type,
+#stats,
+#gear,
+#quit {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--paper);
+  cursor: pointer;
+  transition: color 180ms ease, transform 120ms ease;
+}
+#mic:active, #type:active, #stats:active, #gear:active, #quit:active { transform: scale(0.9); }
+
+#mic svg,
+#type svg,
+#stats svg,
+#gear svg,
+#quit svg { grid-area: 1 / 1; width: 21px; height: 21px; pointer-events: none; }
+#mic .fill, #type .fill, #stats .fill { fill: currentColor; }
+#quit .stroke { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+#gear .fill { fill: currentColor; }
+#mic .stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+#type .thin {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+#type { color: var(--muted); transition: color 160ms ease; }
+#type:hover, [data-compose='open'] #type { color: var(--paper); }
+
+/*
+ * Kept out of the way until asked for: the counter is something you go and
+ * look at, not something that should sit in the corner of your eye all day.
+ * The negative margin cancels the flex gap while it is collapsed, so the
+ * capsule does not carry a hole where the button will be.
+ */
+#stats,
+#gear,
+#quit {
+  width: 0;
+  margin-left: -6px;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  color: var(--muted);
+  transition: width 200ms ease, margin 200ms ease, opacity 200ms ease, color 160ms ease;
+}
+#capsule:hover #stats,
+#capsule:hover #gear,
+#capsule:hover #quit,
+[data-usage='open'] #stats,
+[data-usage='open'] #gear,
+[data-usage='open'] #quit,
+[data-settings='open'] #stats,
+[data-settings='open'] #gear,
+[data-settings='open'] #quit {
+  width: 24px;
+  margin-left: 0;
+  opacity: 1;
+  pointer-events: auto;
+}
+#stats:hover, [data-usage='open'] #stats,
+#gear:hover, [data-settings='open'] #gear { color: var(--paper); }
+
+/*
+ * The one place red is not "live". Quitting is the only irreversible thing on
+ * the capsule and it sits one button away from the microphone, so it warns on
+ * approach rather than on press.
+ */
+#quit:hover { color: var(--live); }
+
+#usage {
+  min-width: 260px;
+  max-width: 420px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: var(--ink);
+  border: 1px solid var(--hairline);
+  color: var(--paper);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-variant-numeric: tabular-nums;
+  -webkit-app-region: no-drag;
+}
+#usage h3 {
+  margin: 0 0 7px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+#usage dl { display: grid; grid-template-columns: 1fr auto; gap: 3px 18px; margin: 0; }
+#usage dt { color: var(--muted); }
+#usage dd { margin: 0; text-align: right; }
+#usage .total { font-weight: 700; }
+#usage footer {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Only one glyph is ever shown; the mic is the default. */
+#alert { display: none; }
+
+/* ------------------------------------------------------------------ meter */
+
+/*
+ * Driven by raw microphone level, before any word is recognised — which is the
+ * difference between "it cannot hear me" and "it heard me and recognised
+ * nothing", visible at a glance.
+ */
+#meter {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  width: 0;
+  height: 18px;
+  overflow: hidden;
+  opacity: 0;
+  transition: width 320ms cubic-bezier(0.22, 0.8, 0.24, 1), opacity 200ms ease;
+}
+[data-state='listening'] #meter,
+[data-state='transcribing'] #meter { width: 27px; opacity: 1; }
+
+#meter i {
+  display: block;
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--live);
+  transform: scaleY(var(--bar, 0.12));
+  transition: transform 70ms linear;
+}
+/* Staggered so it reads as a level, not five identical blocks. */
+#meter i:nth-child(1) { --bar: calc(var(--level-raw, 0) * 0.55 + 0.12); }
+#meter i:nth-child(2) { --bar: calc(var(--level-raw, 0) * 0.85 + 0.12); }
+#meter i:nth-child(3) { --bar: calc(var(--level-raw, 0) * 1.00 + 0.14); }
+#meter i:nth-child(4) { --bar: calc(var(--level-raw, 0) * 0.80 + 0.12); }
+#meter i:nth-child(5) { --bar: calc(var(--level-raw, 0) * 0.50 + 0.12); }
+
+/* -------------------------------------------------------------- transcript */
+
+/* Three lines of what it thinks you said, then the oldest words scroll away. */
+#heard {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--paper);
+}
+#heard:empty { display: none; }
+[data-state='listening'] #heard:empty {
+  display: block;
+  color: var(--muted);
+}
+[data-state='listening'] #heard:empty::after { content: 'Listening…'; }
+
+/* ------------------------------------------------------------------ states */
+
+/* Live: hearing the room. */
+[data-state='listening'] #mic { color: var(--live); }
+
+/* Working. Still black and white — it is not live, it is busy. */
+[data-state='transcribing'] #glyph,
+[data-state='capturing'] #glyph,
+[data-state='thinking'] #glyph { animation: breathe 1.4s ease-in-out infinite; }
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+
+/* Live: it has the mouse and the keyboard. Deliberately alarming. */
+[data-state='acting'] #capsule {
+  background: var(--live);
+  border-color: var(--live);
+  animation: pulse 900ms ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 52, 43, 0.55); }
+  50%      { box-shadow: 0 0 0 12px rgba(255, 52, 43, 0); }
+}
+
+/* Broken, and it must not read as recording: no red anywhere. */
+[data-state='error'] #glyph { display: none; }
+[data-state='error'] #alert { display: block; }
+
+/* ------------------------------------------------------------- status/card */
+
+#status {
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 0;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+#status:empty { display: none; }
+
+/* The same surface as the answer: what you type and what comes back are two
+   halves of one conversation, so they are drawn the same way. */
+#compose {
+  width: 560px;
+  max-width: 780px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: var(--ink);
+  border: 1px solid var(--paper);
+  color: var(--paper);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  -webkit-app-region: no-drag;
+}
+
+#prompt {
+  display: block;
+  width: 100%;
+  max-height: 132px;
+  border: none;
+  outline: none;
+  resize: none;
+  overflow-y: auto;
+  background: transparent;
+  color: var(--paper);
+  font: inherit;
+  line-height: 1.45;
+  -webkit-user-select: text;
+  user-select: text;
+}
+#prompt::placeholder { color: var(--muted); }
+
+#card {
+  position: relative;
+  max-width: 780px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 11px 14px;
+  border-radius: 14px;
+  background: var(--ink);
+  border: 1px solid var(--hairline);
+  color: var(--paper);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+#card p { margin: 0; padding-right: 20px; }
+
+/* An answer you have finished with should go away when you say so. */
+#dismiss {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+#dismiss:hover { color: var(--paper); }
+
+/* A failure is stated in words, not in colour. */
+#card.fail { border-color: var(--paper); font-weight: 600; }
+
+#stop {
+  flex: none;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: none;
+  cursor: pointer;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* ---------------------------------------------------------------- settings */
+
+#settings {
+  width: 340px;
+  /*
+   * A pixel ceiling, never vh. The window is sized from this content, so a
+   * viewport-relative height measures itself against a window that only exists
+   * because of it — and the panel gets clamped to a fraction of the capsule.
+   */
+  max-height: 620px;
+  overflow-y: auto;
+  padding: 12px 14px 10px;
+  border-radius: 14px;
+  background: var(--ink);
+  border: 1px solid var(--hairline);
+  color: var(--paper);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  -webkit-app-region: no-drag;
+}
+#settings h3 {
+  margin: 12px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+#settings h3:first-child { margin-top: 0; }
+
+#settings .row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 26px;
+  font-size: 12.5px;
+}
+#settings .field { display: flex; align-items: center; gap: 5px; color: var(--muted); }
+#settings .check { justify-content: flex-start; cursor: pointer; }
+#settings .check span { color: var(--paper); }
+
+#settings input[type='text'],
+#settings input[type='password'],
+#settings input[type='number'],
+#settings select {
+  padding: 3px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--paper);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+#settings input[type='text'],
+#settings input[type='password'] { width: 150px; }
+#settings input[type='number'] { width: 74px; text-align: right; }
+#settings input:focus, #settings select:focus { border-color: var(--paper); }
+#settings input[type='checkbox'] { accent-color: var(--paper); margin-right: 8px; }
+
+/*
+ * The picker is the screen: nine cells, the middle one inert, so the choice is
+ * "there" rather than a word like "bottom-right" you have to translate.
+ */
+#align-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  aspect-ratio: 16 / 10;
+  padding: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+}
+#align-grid button {
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+#align-grid button:hover { background: rgba(255, 255, 255, 0.14); }
+#align-grid button[aria-checked='true'] {
+  background: var(--paper);
+  border-color: var(--paper);
+}
+#align-grid .screen {
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#settings footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--muted);
+}
+#settings-save {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+/* ------------------------------------------------- which edge it hangs from */
+
+/* The capsule is drawn as something attached to an edge, so the square corners
+   have to follow the edge it is actually attached to. */
+#app[data-align^='bottom'] { flex-direction: column-reverse; padding: 14px 14px 0; }
+/*
+ * On a side edge the whole thing turns through ninety degrees: the buttons
+ * stack into a vertical strip and everything else — transcript, answer,
+ * settings — opens sideways off it, so the capsule still grows away from the
+ * edge it is attached to rather than along it.
+ */
+#app[data-align='left'],
+#app[data-align='right'] {
+  flex-direction: row;
+  align-items: flex-start;
+  padding: 14px;
+}
+#app[data-align='right'] { flex-direction: row-reverse; }
+
+/* The capsule stays a row; only the buttons stack. That keeps the transcript
+   beside the strip at full width instead of squeezed underneath it. */
+#app[data-align='left'] #tools,
+#app[data-align='right'] #tools { flex-direction: column; }
+
+#app[data-align='left'] #capsule,
+#app[data-align='right'] #capsule { padding: 10px 6px; }
+#app[data-align='left'][data-state]:not([data-state='idle']) #capsule,
+#app[data-align='right'][data-state]:not([data-state='idle']) #capsule { padding: 12px 14px; }
+
+/* Revealed downwards, not sideways, when the strip runs vertically. */
+#app[data-align='left'] #stats,
+#app[data-align='left'] #gear,
+#app[data-align='left'] #quit,
+#app[data-align='right'] #stats,
+#app[data-align='right'] #gear,
+#app[data-align='right'] #quit {
+  width: 24px;
+  height: 0;
+  margin-left: 0;
+  margin-top: -6px;
+}
+#app[data-align='left'] #capsule:hover #stats,
+#app[data-align='left'] #capsule:hover #gear,
+#app[data-align='left'] #capsule:hover #quit,
+#app[data-align='right'] #capsule:hover #stats,
+#app[data-align='right'] #capsule:hover #gear,
+#app[data-align='right'] #capsule:hover #quit,
+#app[data-align='left'][data-usage='open'] #stats,
+#app[data-align='left'][data-usage='open'] #gear,
+#app[data-align='left'][data-usage='open'] #quit,
+#app[data-align='left'][data-settings='open'] #stats,
+#app[data-align='left'][data-settings='open'] #gear,
+#app[data-align='left'][data-settings='open'] #quit,
+#app[data-align='right'][data-usage='open'] #stats,
+#app[data-align='right'][data-usage='open'] #gear,
+#app[data-align='right'][data-usage='open'] #quit,
+#app[data-align='right'][data-settings='open'] #stats,
+#app[data-align='right'][data-settings='open'] #gear,
+#app[data-align='right'][data-settings='open'] #quit {
+  height: 24px;
+  margin-top: 0;
+}
+
+/* A vertical strip has no ceiling to hit; the horizontal one is meaningless. */
+#app[data-align='left'] #capsule,
+#app[data-align='right'] #capsule { max-width: none; }
+#app[data-align='left'][data-state='idle'] #capsule,
+#app[data-align='right'][data-state='idle'] #capsule { min-width: 0; }
+
+#app[data-align^='bottom'] #capsule { border-radius: 16px 16px 0 0; border-top: 1px solid var(--hairline); border-bottom: none; }
+#app[data-align^='bottom'][data-state]:not([data-state='idle']) #capsule { border-radius: 20px 20px 0 0; }
+/* Square against the edge it is attached to, rounded on the three free sides. */
+#app[data-align='left'] #capsule {
+  border-radius: 0 18px 18px 0;
+  border-top: 1px solid var(--hairline);
+  border-left: none;
+}
+#app[data-align='right'] #capsule {
+  border-radius: 18px 0 0 18px;
+  border-top: 1px solid var(--hairline);
+  border-right: none;
+}
