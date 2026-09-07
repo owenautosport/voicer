@@ -92,6 +92,18 @@
         <span class="field"><input type="number" id="set-silence" min="0" max="10000" step="250" /> ms</span>
       </label>
 
+      <h3>Thinking</h3>
+      <label class="row">
+        <span>Model</span>
+        <span class="field"><select id="set-model">
+          <option value="">Default (follow Claude Code)</option>
+          <option value="opus[1m]">Opus (1M context)</option>
+          <option value="claude-fable-5-1[1m]">Fable</option>
+          <option value="sonnet">Sonnet</option>
+          <option value="haiku">Haiku</option>
+        </select></span>
+      </label>
+
       <h3>Voice</h3>
       <label class="row">
         <span>Speak with</span>

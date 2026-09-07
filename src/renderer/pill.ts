@@ -129,6 +129,7 @@ const loadSettings = async () => {
   paintAlign()
   field<HTMLInputElement>('set-automove').checked = c.window.autoMove
   field<HTMLInputElement>('set-silence').value = String(c.listen.silenceMs)
+  field<HTMLSelectElement>('set-model').value = c.model ?? ''
   field<HTMLSelectElement>('set-backend').value = c.tts.backend
   field<HTMLInputElement>('set-fishkey').value = c.tts.fishApiKey ?? ''
   field<HTMLInputElement>('set-voiceid').value = c.tts.voiceId ?? ''
@@ -160,6 +161,9 @@ saveBtn.addEventListener('click', async () => {
   await save({
     window: { alignment: chosenAlign, autoMove: field<HTMLInputElement>('set-automove').checked },
     listen: { silenceMs: num('set-silence', 2000) },
+    // Empty means "no opinion" — the key is dropped so Claude Code's own
+    // model choice applies, rather than Voicer pinning one behind your back.
+    model: field<HTMLSelectElement>('set-model').value || undefined,
     tts: {
       backend: field<HTMLSelectElement>('set-backend').value,
       fishApiKey: str('set-fishkey') || undefined,

@@ -15,6 +15,12 @@ export type VoicerConfig = {
   claudePath?: string
   /** Where the agent works. Defaults to the home directory. */
   agentCwd?: string
+  /**
+   * Which model the agent thinks with — an alias (`opus[1m]`, `sonnet`,
+   * `haiku`) or a full id. Left unset, Voicer follows whatever Claude Code is
+   * already configured to use rather than pinning a model of its own.
+   */
+  model?: string
 }
 
 const DEFAULTS: VoicerConfig = {
@@ -64,6 +70,7 @@ export function loadConfig(dir: string = configDir()): VoicerConfig {
       },
       ...(raw.claudePath ? { claudePath: raw.claudePath } : {}),
       ...(raw.agentCwd ? { agentCwd: raw.agentCwd } : {}),
+      ...(raw.model ? { model: raw.model } : {}),
     }
   } catch {
     return structuredClone(DEFAULTS)

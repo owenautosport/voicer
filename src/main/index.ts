@@ -117,7 +117,9 @@ app.whenReady().then(() => {
     avoid,
   })
 
-  const agent = new AgentClient({ log, controlServer, claudePath, cwd: agentCwd })
+  const agent = new AgentClient({
+    log, controlServer, claudePath, cwd: agentCwd, model: settings.model,
+  })
 
   const orchestrator = new Orchestrator({
     sidecar,
@@ -140,6 +142,7 @@ app.whenReady().then(() => {
     setAlignment(preferred)
 
     // Applied live. Everything else — voice, paths — is read at startup.
+    agent.model = settings.model
     sidecar.listenSilenceMs = settings.listen.silenceMs
     sidecar.captureOptions = {
       maxEdge: settings.capture.maxEdgePx,
