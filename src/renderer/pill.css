@@ -3,18 +3,38 @@
  * and holding a conversation grows it downward — the meter first, then what it
  * thinks you said.
  *
- * Three colours and no more. Black is the app, white is what it is telling you,
- * and red means it is live — hearing the room, or holding your mouse and
- * keyboard. Nothing else is ever red, because a red pill that might instead mean
- * "something went wrong" is exactly how a dead turn came to look like a
- * recording that would not stop.
+ * Three colours in the resting state and no more. Black is the app, white is
+ * what it is telling you, and red means it is live — hearing the room, or
+ * holding your mouse and keyboard. Nothing else is ever red, because a red pill
+ * that might instead mean "something went wrong" is exactly how a dead turn
+ * came to look like a recording that would not stop.
+ *
+ * Colour under the cursor is a fourth thing, and it is allowed because it is
+ * never on screen unless you put it there: quit warns in red on approach, and
+ * the counter answers in green. Neither can be mistaken for a state.
  */
 :root {
   --ink: #0a0a0b;
   --paper: #ffffff;
   --live: #ff342b;
+  --go: #35d07f;
   --muted: rgba(255, 255, 255, 0.55);
   --hairline: rgba(255, 255, 255, 0.16);
+
+  /* One button, and the air between two of them. */
+  --btn: 24px;
+  --tool-gap: 6px;
+  /*
+   * The capsule's own inset, less the half-gap each end button already carries,
+   * so the drawn padding still reads as 12px.
+   */
+  --pad-x: 9px;
+  /*
+   * One button box. The revealed buttons do not divide evenly around the mic
+   * and the keyboard — one goes to their left and two to their right — and this
+   * is exactly that difference.
+   */
+  --lean: calc(var(--btn) + var(--tool-gap));
   color-scheme: dark;
 }
 
@@ -61,12 +81,14 @@ button { -webkit-app-region: no-drag; }
   display: flex;
   align-items: center;
   gap: 0;
-  /* Room for every button that can appear: 5x24 + 4x6 gaps + 24 padding = 168.
-     Sizing this for the buttons visible at rest is what clipped the revealed
-     ones and left the right-hand padding looking narrower than the left. */
-  max-width: 186px;
+  /* Room for every button that can appear: five button boxes, the capsule's
+     inset each side, and the hairline, which counts because box-sizing is
+     border-box. Sizing this for the buttons visible at rest is what clipped the
+     revealed ones and left the right-hand padding looking narrower than the
+     left; being two pixels short of the border does the same thing, quietly. */
+  max-width: calc(5 * (var(--btn) + var(--tool-gap)) + 2 * var(--pad-x) + 2px);
   min-height: 34px;
-  padding: 5px 12px;
+  padding: 5px var(--pad-x);
   cursor: pointer;
   /* The whole capsule is the button: a 22px glyph is not a target. */
   -webkit-app-region: no-drag;
@@ -81,6 +103,9 @@ button { -webkit-app-region: no-drag; }
     max-width 320ms cubic-bezier(0.22, 0.8, 0.24, 1),
     padding 320ms cubic-bezier(0.22, 0.8, 0.24, 1),
     gap 320ms cubic-bezier(0.22, 0.8, 0.24, 1),
+    /* In step with the buttons it is making room for, or the pair it is holding
+       still would drift while the lean caught up. */
+    margin 200ms ease,
     background 180ms ease,
     border-color 180ms ease;
 }
@@ -97,14 +122,21 @@ button { -webkit-app-region: no-drag; }
   min-width: 340px;
   max-width: 900px;
   gap: 13px;
-  padding: 10px 18px;
+  padding: 10px calc(var(--pad-x) + 6px);
   border-radius: 0 0 20px 20px;
 }
 [data-state='error'] #capsule { border-color: var(--paper); }
 
-/* The two buttons carry their own spacing, so the capsule's own gap can stay at
-   zero and not open a hole where the hidden meter sits. */
-#tools { display: flex; align-items: center; gap: 6px; flex: none; }
+/*
+ * The buttons carry their own spacing, so the capsule's own gap can stay at
+ * zero and not open a hole where the hidden meter sits.
+ *
+ * `gap: 0` and half the spacing on each button, rather than a flex gap: a
+ * collapsed button then contributes nothing whatsoever — no width, no margin,
+ * no gap — so the row can be reordered per screen edge without a negative
+ * margin having to be re-sided to match.
+ */
+#tools { display: flex; align-items: center; gap: 0; flex: none; }
 
 #mic,
 #type,
@@ -114,8 +146,9 @@ button { -webkit-app-region: no-drag; }
   display: grid;
   place-items: center;
   flex: none;
-  width: 24px;
-  height: 24px;
+  width: var(--btn);
+  height: var(--btn);
+  margin: 0 calc(var(--tool-gap) / 2);
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -150,38 +183,34 @@ button { -webkit-app-region: no-drag; }
 #type:hover, [data-compose='open'] #type { color: var(--paper); }
 
 /*
- * Kept out of the way until asked for: the counter is something you go and
- * look at, not something that should sit in the corner of your eye all day.
- * The negative margin cancels the flex gap while it is collapsed, so the
- * capsule does not carry a hole where the button will be.
+ * Kept out of the way until asked for: the counter is something you go and look
+ * at, not something that should sit in the corner of your eye all day.
  */
 #stats,
 #gear,
 #quit {
   width: 0;
-  margin-left: -6px;
+  margin: 0;
   opacity: 0;
   pointer-events: none;
   overflow: hidden;
   color: var(--muted);
-  transition: width 200ms ease, margin 200ms ease, opacity 200ms ease, color 160ms ease;
+  transition:
+    width 200ms ease, height 200ms ease, margin 200ms ease,
+    opacity 200ms ease, color 160ms ease;
 }
-#capsule:hover #stats,
-#capsule:hover #gear,
-#capsule:hover #quit,
-[data-usage='open'] #stats,
-[data-usage='open'] #gear,
-[data-usage='open'] #quit,
-[data-settings='open'] #stats,
-[data-settings='open'] #gear,
-[data-settings='open'] #quit {
-  width: 24px;
-  margin-left: 0;
+#app:is(:has(#capsule:hover), [data-usage='open'], [data-settings='open'])
+:is(#stats, #gear, #quit) {
+  width: var(--btn);
+  margin: 0 calc(var(--tool-gap) / 2);
   opacity: 1;
   pointer-events: auto;
 }
-#stats:hover, [data-usage='open'] #stats,
 #gear:hover, [data-settings='open'] #gear { color: var(--paper); }
+
+/* Green is the counter's own colour: what it opens is the one panel that
+   answers a question rather than changing something. */
+#stats:hover, [data-usage='open'] #stats { color: var(--go); }
 
 /*
  * The one place red is not "live". Quitting is the only irreversible thing on
@@ -189,6 +218,39 @@ button { -webkit-app-region: no-drag; }
  * approach rather than on press.
  */
 #quit:hover { color: var(--live); }
+
+/* --------------------------------------------- holding the pair still */
+
+/*
+ * The mic and the keyboard must not move when the other three appear. You are
+ * already reaching for one of them, and a target that slides out from under the
+ * cursor is a target you miss.
+ *
+ * The window is sized to its content and then placed by `placeIn`, so which
+ * screen edge is pinned decides where a new button is allowed to appear:
+ *
+ *   Centred (top, bottom, left, right) — the window's centre is the one point
+ *     that does not move when it is resized, so the pair only holds still if it
+ *     sits on that centre. The counter goes to one side of the pair and
+ *     settings and quit to the other, and the capsule leans by the one-button
+ *     difference between those two groups to put the pair back on the middle.
+ *     The lean is transparent window rather than drawn capsule, so the pill
+ *     itself never looks lopsided.
+ *   Pinned to a start edge (top-left, bottom-left) — that edge cannot move, so
+ *     nothing may appear before the pair. DOM order already does this.
+ *   Pinned to an end edge (top-right, bottom-right) — the mirror of it:
+ *     everything appears before the pair.
+ */
+#app:is([data-align='top'], [data-align='bottom'],
+        [data-align='left'], [data-align='right']) #stats { order: -1; }
+
+#app:is([data-align='top'], [data-align='bottom']):is(:has(#capsule:hover),
+        [data-usage='open'], [data-settings='open']) #capsule {
+  margin-left: var(--lean);
+}
+
+#app:is([data-align='top-right'], [data-align='bottom-right'])
+:is(#stats, #gear, #quit) { order: -1; }
 
 #usage {
   min-width: 260px;
@@ -536,43 +598,33 @@ button { -webkit-app-region: no-drag; }
 #app[data-align='left'] #tools,
 #app[data-align='right'] #tools { flex-direction: column; }
 
-#app[data-align='left'] #capsule,
-#app[data-align='right'] #capsule { padding: 10px 6px; }
-#app[data-align='left'][data-state]:not([data-state='idle']) #capsule,
-#app[data-align='right'][data-state]:not([data-state='idle']) #capsule { padding: 12px 14px; }
+#app:is([data-align='left'], [data-align='right']) #capsule { padding: 7px 6px; }
+#app:is([data-align='left'], [data-align='right'])[data-state]:not([data-state='idle'])
+#capsule { padding: 9px 14px; }
 
-/* Revealed downwards, not sideways, when the strip runs vertically. */
-#app[data-align='left'] #stats,
-#app[data-align='left'] #gear,
-#app[data-align='left'] #quit,
-#app[data-align='right'] #stats,
-#app[data-align='right'] #gear,
-#app[data-align='right'] #quit {
-  width: 24px;
+/* Revealed downwards, not sideways, when the strip runs vertically — and the
+   half-gap each button carries turns through ninety degrees with it. Order
+   matters below: the collapsed rule has to come after the spacing rule it
+   overrides, because the two are equally specific. */
+#app:is([data-align='left'], [data-align='right'])
+:is(#mic, #type, #stats, #gear, #quit) { margin: calc(var(--tool-gap) / 2) 0; }
+
+#app:is([data-align='left'], [data-align='right']) :is(#stats, #gear, #quit) {
+  width: var(--btn);
   height: 0;
-  margin-left: 0;
-  margin-top: -6px;
+  margin: 0;
 }
-#app[data-align='left'] #capsule:hover #stats,
-#app[data-align='left'] #capsule:hover #gear,
-#app[data-align='left'] #capsule:hover #quit,
-#app[data-align='right'] #capsule:hover #stats,
-#app[data-align='right'] #capsule:hover #gear,
-#app[data-align='right'] #capsule:hover #quit,
-#app[data-align='left'][data-usage='open'] #stats,
-#app[data-align='left'][data-usage='open'] #gear,
-#app[data-align='left'][data-usage='open'] #quit,
-#app[data-align='left'][data-settings='open'] #stats,
-#app[data-align='left'][data-settings='open'] #gear,
-#app[data-align='left'][data-settings='open'] #quit,
-#app[data-align='right'][data-usage='open'] #stats,
-#app[data-align='right'][data-usage='open'] #gear,
-#app[data-align='right'][data-usage='open'] #quit,
-#app[data-align='right'][data-settings='open'] #stats,
-#app[data-align='right'][data-settings='open'] #gear,
-#app[data-align='right'][data-settings='open'] #quit {
-  height: 24px;
-  margin-top: 0;
+#app:is([data-align='left'], [data-align='right']):is(:has(#capsule:hover),
+        [data-usage='open'], [data-settings='open']) :is(#stats, #gear, #quit) {
+  height: var(--btn);
+  margin: calc(var(--tool-gap) / 2) 0;
+}
+
+/* Both side edges are centred on the other axis, so the pair is held still the
+   same way — by the same lean, turned through ninety degrees. */
+#app:is([data-align='left'], [data-align='right']):is(:has(#capsule:hover),
+        [data-usage='open'], [data-settings='open']) #capsule {
+  margin-top: var(--lean);
 }
 
 /* A vertical strip has no ceiling to hit; the horizontal one is meaningless. */

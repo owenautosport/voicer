@@ -1,3 +1,5 @@
+import { KOKORO_DTYPES, KOKORO_VOICES } from '../shared/voices'
+
 type Bridge = {
   micClick(): void
   abort(): void
@@ -23,7 +25,7 @@ type Bridge = {
   }>
   onStatus(fn: (t: string) => void): void
   onFail(fn: (m: string) => void): void
-  onAudio(fn: (mp3: ArrayBuffer) => void): void
+  onAudio(fn: (audio: ArrayBuffer, mime: string) => void): void
   audioDone(): void
 }
 
@@ -47,8 +49,23 @@ const alignGrid = document.getElementById('align-grid')!
 const saveBtn = document.getElementById('settings-save')!
 const note = document.getElementById('settings-note')!
 const field = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
+
+/** Filled from the same list the main process validates against, so the panel
+ *  cannot offer a voice that would silently be refused. */
+const fillOptions = (id: string, items: readonly { id: string; label: string }[]) => {
+  const el = field<HTMLSelectElement>(id)
+  for (const item of items) {
+    const option = document.createElement('option')
+    option.value = item.id
+    option.textContent = item.label
+    el.append(option)
+  }
+}
 const heard = document.getElementById('heard')!
 const stopBtn = document.getElementById('stop') as HTMLButtonElement
+
+fillOptions('set-kokoro-voice', KOKORO_VOICES)
+fillOptions('set-kokoro-dtype', KOKORO_DTYPES)
 
 // The window is sized to whatever is actually drawn, every frame of every
 // transition, so the invisible rectangle never sits over the app behind it.
@@ -131,6 +148,8 @@ const loadSettings = async () => {
   field<HTMLInputElement>('set-silence').value = String(c.listen.silenceMs)
   field<HTMLSelectElement>('set-model').value = c.model ?? ''
   field<HTMLSelectElement>('set-backend').value = c.tts.backend
+  field<HTMLSelectElement>('set-kokoro-voice').value = c.tts.kokoroVoice
+  field<HTMLSelectElement>('set-kokoro-dtype').value = c.tts.kokoroDtype
   field<HTMLInputElement>('set-fishkey').value = c.tts.fishApiKey ?? ''
   field<HTMLInputElement>('set-voiceid').value = c.tts.voiceId ?? ''
   field<HTMLInputElement>('set-maxedge').value = String(c.capture.maxEdgePx)
@@ -166,6 +185,8 @@ saveBtn.addEventListener('click', async () => {
     model: field<HTMLSelectElement>('set-model').value || undefined,
     tts: {
       backend: field<HTMLSelectElement>('set-backend').value,
+      kokoroVoice: field<HTMLSelectElement>('set-kokoro-voice').value,
+      kokoroDtype: field<HTMLSelectElement>('set-kokoro-dtype').value,
       fishApiKey: str('set-fishkey') || undefined,
       voiceId: str('set-voiceid') || undefined,
     },
@@ -283,8 +304,8 @@ v.onFail((message) => {
 })
 
 // Audio is played here because the main process has no output device.
-v.onAudio(async (mp3) => {
-  const url = URL.createObjectURL(new Blob([mp3], { type: 'audio/mpeg' }))
+v.onAudio(async (audio, mime) => {
+  const url = URL.createObjectURL(new Blob([audio], { type: mime }))
   const el = new Audio(url)
   const done = () => { URL.revokeObjectURL(url); v.audioDone() }
   el.addEventListener('ended', done, { once: true })

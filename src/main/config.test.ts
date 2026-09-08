@@ -25,6 +25,45 @@ describe('loadConfig', () => {
     expect(cfg.capture.quality).toBe(70)
   })
 
+  it('keeps a Kokoro backend, its voice and its model size', () => {
+    const d = dir()
+    writeFileSync(join(d, 'config.json'), JSON.stringify({
+      tts: { backend: 'kokoro', kokoroVoice: 'bf_emma', kokoroDtype: 'q8' },
+    }))
+    const cfg = loadConfig(d)
+    expect(cfg.tts.backend).toBe('kokoro')
+    expect(cfg.tts.kokoroVoice).toBe('bf_emma')
+    expect(cfg.tts.kokoroDtype).toBe('q8')
+  })
+
+  it('has a Kokoro voice and model size even when nothing is configured', () => {
+    const cfg = loadConfig(dir())
+    expect(cfg.tts.kokoroVoice).toBe('bm_george')
+    expect(cfg.tts.kokoroDtype).toBe('fp32')
+  })
+
+  /*
+   * Both of these name a file that has to exist in the model repository. A
+   * typo would not be a wrong voice, it would be a backend that throws on
+   * every sentence and quietly demotes Voicer to the robot voice for the rest
+   * of the session.
+   */
+  it('ignores a voice or a model size it does not recognise', () => {
+    const d = dir()
+    writeFileSync(join(d, 'config.json'), JSON.stringify({
+      tts: { backend: 'kokoro', kokoroVoice: 'bm_jarvis', kokoroDtype: 'q4' },
+    }))
+    const cfg = loadConfig(d)
+    expect(cfg.tts.kokoroVoice).toBe('bm_george')
+    expect(cfg.tts.kokoroDtype).toBe('fp32')
+  })
+
+  it('ignores a backend it does not recognise', () => {
+    const d = dir()
+    writeFileSync(join(d, 'config.json'), JSON.stringify({ tts: { backend: 'elevenlabs' } }))
+    expect(loadConfig(d).tts.backend).toBe('apple')
+  })
+
   it('falls back to defaults on malformed JSON rather than throwing', () => {
     const d = dir()
     writeFileSync(join(d, 'config.json'), '{ not json')
@@ -107,6 +146,31 @@ describe('saveConfig', () => {
     const c = loadConfig(d)
     expect(c.tts.fishApiKey).toBe('k')
     expect(c.listen.silenceMs).toBe(3000)
+  })
+
+  /*
+   * The panel sends whole sections today, but the type says a section may be
+   * patched in part — and a shallow merge would honour that by dropping every
+   * field the patch did not mention. A Fish key lost on the way to changing the
+   * Kokoro voice is exactly the sort of thing nobody notices until the voice
+   * has quietly been the fallback for a week.
+   */
+  it('keeps the rest of a section when only part of it is patched', () => {
+    const d = dir()
+    saveConfig({ tts: { backend: 'fish', fishApiKey: 'k', voiceId: 'v' } }, d)
+    saveConfig({ tts: { backend: 'kokoro', kokoroVoice: 'bf_emma' } }, d)
+    const c = loadConfig(d)
+    expect(c.tts.backend).toBe('kokoro')
+    expect(c.tts.kokoroVoice).toBe('bf_emma')
+    expect(c.tts.fishApiKey).toBe('k')
+    expect(c.tts.voiceId).toBe('v')
+  })
+
+  it('clears a field that is patched away', () => {
+    const d = dir()
+    saveConfig({ tts: { backend: 'fish', fishApiKey: 'k' } }, d)
+    saveConfig({ tts: { backend: 'fish', fishApiKey: undefined } }, d)
+    expect(loadConfig(d).tts.fishApiKey).toBeUndefined()
   })
 
   it('round-trips a model choice', () => {

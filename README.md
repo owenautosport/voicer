@@ -52,15 +52,37 @@ key, and it inherits the MCP servers, skills and instructions you have already c
 
 ### Voice
 
-Voicer speaks through a pluggable backend:
+Voicer speaks through a pluggable backend, chosen in Settings:
 
-1. **[Fish Audio](https://fish.audio) `s2.1-pro-free`** — the default. Human-sounding, free, no
-   card required.
-2. **Apple `AVSpeechSynthesizer`** — the fallback, via the sidecar. Offline and always available.
+1. **[Kokoro 82M](https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX)** — the good one.
+   An 82M-parameter model running on this Mac through `onnxruntime-node`: no key, no account,
+   and nothing said out loud ever leaves the machine. Fourteen voices; British George by
+   default. The weights are fetched once into `~/.voicer/models` and loaded at launch.
+2. **[Fish Audio](https://fish.audio) `s2.1-pro-free`** — cloud, human-sounding, free, no card
+   required, but a time-limited promotion.
+3. **Apple `AVSpeechSynthesizer`** — the fallback, via the sidecar. Offline, robotic, and
+   always available.
 
-Any failure from the first demotes the session to the second for the rest of its life. Fish
-Audio's free tier is a time-limited promotion, so when it ends Voicer gets less pleasant to
-listen to rather than silently breaking, and adding a third backend is one file.
+Any failure from the chosen backend demotes the session to Apple for the rest of its life, so
+an outage costs a change of voice rather than a lost answer.
+
+**Kokoro is slower than the speech it produces is long, so the router pipelines.** A sentence
+is handed to the backend the moment it is complete rather than when its turn comes, and the gap
+while the previous sentence plays pays for making the next one. Without that, every sentence
+lands however long it took to synthesise late, and the delays add up across an answer.
+
+**Which weights, and a trap.** Measured on an Intel i5-1038NG7:
+
+| Weights | Size | Time to speak 3.4s | Verdict |
+| --- | --- | --- | --- |
+| `fp32` | 320 MB | 1.5s | the default |
+| `q4` | 304 MB | 1.5s | no smaller, no faster — not offered |
+| `q8` | 96 MB | 5.1s | **slower than real time** |
+
+Quantising this model buys a smaller download and *costs* speed, which is the opposite way
+round from most of them. `q8` is the one that looks like the sensible middle ground and is the
+one to avoid; it is offered only as a small download for a slow connection, and labelled as
+slower.
 
 ### Computer control
 

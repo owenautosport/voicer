@@ -10,9 +10,11 @@ import { createControlServer } from './control-server'
 import { TtsRouter } from './tts/router'
 import { FishBackend } from './tts/fish'
 import { AppleBackend } from './tts/apple'
+import { KokoroBackend } from './tts/kokoro'
+import { createKokoroSynth } from './tts/kokoro-model'
 import { loadConfig, saveConfig, configDir, resolveClaudePath, resolveAgentCwd } from './config'
 import { placeIn, alignmentAwayFrom, type Alignment } from './placement'
-import type { VoicerConfig } from './config'
+import type { ConfigPatch } from './config'
 import type { TtsBackend } from './tts/types'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -84,11 +86,21 @@ app.whenReady().then(() => {
   sidecar.onError((err) => console.error('[voicer] sidecar failure:', err.message))
   sidecar.start()
 
-  /** Audio playback lives in the renderer; the main process has no output device. */
-  const playAudio = (mp3: Buffer) =>
+  /**
+   * Audio playback lives in the renderer; the main process has no output device.
+   *
+   * The container travels with the bytes because the backends do not agree on
+   * one: Fish answers with MP3, Kokoro hands back raw samples that are wrapped
+   * as a WAV here.
+   */
+  const playAudio = (audio: Buffer, mime = 'audio/mpeg') =>
     new Promise<void>((resolve) => {
       ipcMain.once('audio-done', () => resolve())
-      win.webContents.send('audio', mp3.buffer)
+      // Copied out rather than passed along: a Buffer can be a window onto a
+      // larger pooled ArrayBuffer, and handing over the whole pool would play
+      // whatever else happened to be sitting in it.
+      const bytes = audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength)
+      win.webContents.send('audio', bytes, mime)
     })
 
   const backends: TtsBackend[] = []
@@ -100,6 +112,20 @@ app.whenReady().then(() => {
       ),
     )
   }
+  if (settings.tts.backend === 'kokoro') {
+    const { synth, warm } = createKokoroSynth({
+      voice: settings.tts.kokoroVoice,
+      dtype: settings.tts.kokoroDtype,
+      cacheDir: join(configDir(), 'models'),
+      onStatus: (text) => win.webContents.send('status', text),
+    })
+    // Load it now rather than when it is first spoken to. Warm, the model takes
+    // about a second; cold, it is a few hundred megabytes off the internet, and
+    // neither of those should be charged to the first thing you say.
+    warm()
+    backends.push(new KokoroBackend(synth, playAudio))
+  }
+
   // Always last, always present: the voice Voicer can never lose.
   backends.push(new AppleBackend(sidecar))
 
@@ -129,7 +155,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('usage', () => agent.usage)
   ipcMain.handle('settings:get', () => settings)
-  ipcMain.handle('settings:set', (_e, patch: Partial<VoicerConfig>) => {
+  ipcMain.handle('settings:set', (_e, patch: ConfigPatch) => {
     try {
       settings = saveConfig(patch)
     } catch (err) {

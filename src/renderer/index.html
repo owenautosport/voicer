@@ -108,9 +108,20 @@
       <label class="row">
         <span>Speak with</span>
         <span class="field"><select id="set-backend">
-          <option value="apple">Apple (offline)</option>
+          <option value="kokoro">Kokoro — on this Mac</option>
+          <option value="apple">Apple — built in</option>
           <option value="fish">Fish Audio</option>
         </select></span>
+      </label>
+      <!-- Both lists are filled from shared/voices.ts, so the panel can never
+           offer something the main process would reject. -->
+      <label class="row">
+        <span>Kokoro voice</span>
+        <span class="field"><select id="set-kokoro-voice"></select></span>
+      </label>
+      <label class="row">
+        <span>Kokoro model</span>
+        <span class="field"><select id="set-kokoro-dtype"></select></span>
       </label>
       <label class="row">
         <span>Fish API key</span>

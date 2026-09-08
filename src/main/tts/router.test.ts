@@ -130,4 +130,81 @@ describe('TtsRouter', () => {
     await r.flush()
     expect(primary.spoken).toEqual(['One.', 'Two.', 'Three.'])
   })
+
+  /*
+   * A backend that makes the audio itself rather than fetching it needs the gap
+   * while the previous sentence plays, or every sentence lands however long it
+   * took to synthesise late — and those delays add up across an answer.
+   */
+  it('tells the backend about a sentence as soon as it is complete', async () => {
+    const prepared: string[] = []
+    const order: string[] = []
+    const backend: TtsBackend = {
+      name: 'local',
+      prepare(text) { prepared.push(text); order.push(`prepare:${text}`) },
+      async speak(text) {
+        await new Promise((r) => setTimeout(r, 5))
+        order.push(`speak:${text}`)
+      },
+    }
+    const r = new TtsRouter([backend])
+    r.push('One. Two. Three. ')
+    await r.flush()
+
+    expect(prepared).toEqual(['One.', 'Two.', 'Three.'])
+    // Every sentence was handed over before the first one had been spoken.
+    expect(order.slice(0, 3)).toEqual(['prepare:One.', 'prepare:Two.', 'prepare:Three.'])
+  })
+
+  /*
+   * Preparing happens before the turn can be abandoned, so the signal is how a
+   * backend learns that what it is making is no longer wanted. It has to be the
+   * same signal the sentence would have been spoken with.
+   */
+  it('prepares with the signal the turn will be spoken with', async () => {
+    const seen: AbortSignal[] = []
+    const backend: TtsBackend = {
+      name: 'local',
+      prepare(_text, signal) { seen.push(signal) },
+      async speak(_text, signal) { seen.push(signal) },
+    }
+    const r = new TtsRouter([backend])
+    r.push('One sentence. ')
+    await r.flush()
+    expect(seen).toHaveLength(2)
+    expect(seen[0]).toBe(seen[1])
+    expect(seen[0]!.aborted).toBe(false)
+
+    const live = seen[0]!
+    r.push('Second turn. ')
+    r.abort()
+    await r.flush()
+    // Aborting the router fires the signal the backend was given, so anything
+    // prepared for that turn can be thrown away.
+    expect(seen[2]!.aborted).toBe(true)
+    expect(live.aborted).toBe(true)
+  })
+
+  it('leaves a backend that cannot prepare alone', async () => {
+    const primary = fake('primary')
+    const r = new TtsRouter([primary])
+    r.push('No prepare here. ')
+    await expect(r.flush()).resolves.toBeUndefined()
+    expect(primary.spoken).toEqual(['No prepare here.'])
+  })
+
+  /* Preparing is an optimisation. A backend that throws while doing it has
+     still not been asked to speak, and must not lose the turn. */
+  it('survives a backend that throws while preparing', async () => {
+    const primary: TtsBackend = {
+      name: 'primary',
+      prepare() { throw new Error('could not start') },
+      async speak(text) { spoken.push(text) },
+    }
+    const spoken: string[] = []
+    const r = new TtsRouter([primary])
+    r.push('Still say this. ')
+    await r.flush()
+    expect(spoken).toEqual(['Still say this.'])
+  })
 })

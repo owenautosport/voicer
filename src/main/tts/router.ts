@@ -61,6 +61,18 @@ export class TtsRouter {
     if (!sentence) return
     const signal = this.#controller.signal
     if (signal.aborted) return
+    /*
+     * Hand the sentence over the moment it is complete rather than when its
+     * turn comes. A backend that synthesises on this machine is slower than the
+     * speech it produces, and the only free time it will ever get is the gap
+     * while the sentence before it is playing. Preparing is an optimisation, so
+     * a backend that throws here has still not been asked to speak.
+     */
+    try {
+      this.backends[this.#index]?.prepare?.(sentence, signal)
+    } catch (err) {
+      console.warn('[tts] prepare failed, carrying on:', err)
+    }
     this.#queue = this.#queue.then(() => this.#speakWithFallback(sentence, signal))
   }
 

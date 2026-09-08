@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('voicer', {
   onAnswer: (fn: (t: string) => void) => ipcRenderer.on('answer', (_e, t) => fn(t)),
   onStatus: (fn: (t: string) => void) => ipcRenderer.on('status', (_e, t) => fn(t)),
   onFail: (fn: (m: string) => void) => ipcRenderer.on('fail', (_e, m) => fn(m)),
-  onAudio: (fn: (mp3: ArrayBuffer) => void) => ipcRenderer.on('audio', (_e, b) => fn(b)),
+  onAudio: (fn: (audio: ArrayBuffer, mime: string) => void) =>
+    ipcRenderer.on('audio', (_e, b, mime) => fn(b, mime)),
   audioDone: () => ipcRenderer.send('audio-done'),
 })
